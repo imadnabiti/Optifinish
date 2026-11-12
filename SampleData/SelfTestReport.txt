@@ -1,0 +1,39 @@
+﻿=== OptiFinish Studio Clean-Room Verification Report ===
+Timestamp: 2026-11-12 11:56:32
+Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
+  Place  1 | Lane 6 | Bib #643  | Vaughn, Angela     | Raw=12.8432s | Official(0.01)=12.85 | Official(0.001)=12.844 | Speed=7.79 m/s
+  Place  2 | Lane 7 | Bib #391  | Lawson, Tonya      | Raw=12.8818s | Official(0.01)=12.89 | Official(0.001)=12.882 | Speed=7.76 m/s
+  Place  3 | Lane 4 | Bib #161  | Dickey, Cheryl     | Raw=12.9144s | Official(0.01)=12.92 | Official(0.001)=12.915 | Speed=7.74 m/s
+  Place  4 | Lane 5 | Bib #61   | Brewer, Elisha     | Raw=12.9502s | Official(0.01)=12.96 | Official(0.001)=12.951 | Speed=7.72 m/s
+  Place  5 | Lane 3 | Bib #348  | Jolivet-Outing, Rosa | Raw=13.0218s | Official(0.01)=13.03 | Official(0.001)=13.022 | Speed=7.68 m/s
+  Place  6 | Lane 8 | Bib #53   | Bowles, Dawn       | Raw=13.0890s | Official(0.01)=13.09 | Official(0.001)=13.089 | Speed=7.64 m/s
+  Place  7 | Lane 2 | Bib #413  | Lott, Tiffany      | Raw=13.1405s | Official(0.01)=13.15 | Official(0.001)=13.141 | Speed=7.61 m/s
+  Place  8 | Lane 1 | Bib #436  | McCray, Yolanda    | Raw=13.2188s | Official(0.01)=13.22 | Official(0.001)=13.219 | Speed=7.56 m/s
+
+=== Native C:\Lynx .evn + .i01/.i02/.spl Decoder Verification (3 files) ===
+  [1] punto zero.evn -> Event='punto zero' (001-25-01), Competitors=0, Cameras=2, Splits=0
+      Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (1240x1024 px, 5000 Hz, 155 blocks) | Span=54874.7247s..54874.9725s
+      Cam 2: 'Camera 2' | IdentiLynx Video (162 frames, 2048x1536 px @ 20 fps) | Span=54871.3310s..54879.1259s
+      >>> punto zero verification:
+          Cameras count: 2
+          Cam 1: IsVideo=False, Res=1240x1024, Frames=0, Rate=5000 Hz/fps
+          Cam 2: IsVideo=True, Res=2048x1536, Frames=162, Rate=20 Hz/fps
+          Exported Frame 0 -> Native_PuntoZero_IdentiLynx_Frame0.png (2048x1536 px)
+          Synchronized Hairline Time -0.0003s -> Video Frame 0 (t = 54871.331s)
+          Exported Photo-Finish -> Native_PuntoZero_PhotoFinish.png
+  [2] Boys3000.evn -> Event='Boys 3000 Meter' (049-35-929), Competitors=18, Cameras=1, Splits=0
+      Cam 1: 'Camera 1' | Lynx EtherLynx RGB555 RLE (1224x500 px, 800 Hz, 20 blocks) | Span=527.4924s..566.0576s
+      Winner: #1507 Torres, Enrique (Lane 1) -> Raw=527.5690s, Official=8:47.57
+  [3] Sprint.evn -> Event='100 Meter Hurdles Women' (017-2-01), Competitors=8, Cameras=2, Splits=0
+      Cam 1: 'Inside Maine' | Lynx EtherLynx RGB555 RLE (867x500 px, 1200 Hz, 11 blocks) | Span=12.7373s..13.5686s
+      Cam 2: 'Outside Maine' | Lynx EtherLynx RGB555 RLE (737x500 px, 1000 Hz, 8 blocks) | Span=12.7297s..13.5706s
+
+=== LynxConfigService & Path Management Verification ===
+  DataInDir (Database .evt/.ppl): C:\Lynx
+  DataOutDir (Results .lif): C:\Lynx
+  EventDir (Events .evn/.i01): C:\Lynx
+  BackupDir (Autosave backup): C:\Lynx\temp
+  AutoSave: False, Interval: 60s
+  LayoutSelection: 0
+  Autosave Test Execution: Success=False (Autosave failed: Access to the path 'C:\Lynx\100 Meter Hurdles Women.lif' is denied.)
+MainWindow initialized: Title='OptiFinish - [punto zero]', Size=1380x860

@@ -1,0 +1,21 @@
+﻿# OptiFinish Studio Clean-Room Race Package v1.0
+EVENT_NUMBER=17
+ROUND_NUMBER=2
+HEAT_NUMBER=1
+EVENT_NAME=100 Meter Hurdles Women
+DISTANCE_METERS=100
+COMPETITION=National Track & Field Championships
+WIND_READING=1.20
+HAS_WIND=1
+PRECISION=2
+LANE_COUNT=8
+CAMERA=ETH-2000-IN|Inside Finish Camera|1000|0|12.6600|100m_Hurdles_Women_cam1.png
+CAMERA=ETH-2000-OUT|Outside Finish Camera|1000|0|12.6600|100m_Hurdles_Women_cam2.png
+COMPETITOR=6|643|Vaughn|Angela|University of Texas|12.84320|0.1420|0|0.6700
+COMPETITOR=7|391|Lawson|Tonya|Unattached|12.88180|0.1510|0|0.7700
+COMPETITOR=4|161|Dickey|Cheryl|Nike Athletics|12.91440|0.1380|0|0.4700
+COMPETITOR=5|61|Brewer|Elisha|Univ of Arkansas|12.95020|0.1640|0|0.5700
+COMPETITOR=3|348|Jolivet-Outing|Rosa|Texas A&M Univ|13.02180|0.1490|0|0.3700
+COMPETITOR=8|53|Bowles|Dawn|Asics Track Club|13.08900|0.1570|0|0.8700
+COMPETITOR=2|413|Lott|Tiffany|Unattached|13.14050|0.1680|0|0.2700
+COMPETITOR=1|436|McCray|Yolanda|Unattached|13.21880|0.1730|0|0.1700

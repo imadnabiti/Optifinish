@@ -1,0 +1,17 @@
+# Compiled binaries
+*.exe
+*.pdb
+*.dll
+
+# Visual Studio / IDE / OS artifacts
+.vs/
+bin/
+obj/
+*.user
+Thumbs.db
+.DS_Store
+
+# Raw camera binary streams (>5MB) and developer reference screenshots
+SampleData/punto zero.*
+SampleData/Native_PuntoZero_IdentiLynx_Frame0.png
+SampleData/Screenshot*.png
