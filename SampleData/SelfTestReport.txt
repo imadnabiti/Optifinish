@@ -1,5 +1,5 @@
 ﻿=== OptiFinish Studio Clean-Room Verification Report ===
-Timestamp: 2026-11-14 17:33:04
+Timestamp: 2026-11-14 17:42:24
 Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   Place  1 | Lane 6 | Bib #643  | Vaughn, Angela     | Raw=12.8432s | Official(0.01)=12.85 | Official(0.001)=12.844 | Speed=7.79 m/s
   Place  2 | Lane 7 | Bib #391  | Lawson, Tonya      | Raw=12.8818s | Official(0.01)=12.89 | Official(0.001)=12.882 | Speed=7.76 m/s
@@ -10,7 +10,7 @@ Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   Place  7 | Lane 2 | Bib #413  | Lott, Tiffany      | Raw=13.1405s | Official(0.01)=13.15 | Official(0.001)=13.141 | Speed=7.61 m/s
   Place  8 | Lane 1 | Bib #436  | McCray, Yolanda    | Raw=13.2188s | Official(0.01)=13.22 | Official(0.001)=13.219 | Speed=7.56 m/s
 Cropped Direct Export: 441x336px (jpg=42436B, png=27772B, tga=444546B)
-Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): 1100x582px (91590B)
+Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): 1100x582px (png=91530B, pdf=145890B ValidPdf=True)
 .optr Round-Trip: Cams=2, Competitors=8, Overlays=1, Crop=[180..620, 0.15..0.75], Brightness=12
 
 === Native C:\Lynx .evn + .i01/.i02/.spl Decoder Verification (8 files) ===

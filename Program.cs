@@ -138,10 +138,14 @@ namespace OptiFinish
             using (Bitmap annotCrop = SlitScanEngine.RenderAnnotatedExportBitmap(doc, 0, testCrop, pCfg))
             {
                 string annotCropPng = Path.Combine(sampleDir, "TestCrop_Annotated.png");
+                string annotCropPdf = Path.Combine(sampleDir, "TestCrop_Annotated.pdf");
                 SlitScanEngine.SaveBitmapToFile(annotCrop, annotCropPng, 92);
+                SlitScanEngine.SaveBitmapToFile(annotCrop, annotCropPdf, 92);
+                byte[] pdfHead = File.ReadAllBytes(annotCropPdf);
+                bool validPdf = pdfHead.Length > 100 && pdfHead[0] == (byte)'%' && pdfHead[1] == (byte)'P' && pdfHead[2] == (byte)'D' && pdfHead[3] == (byte)'F';
                 report.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                    "Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): {0}x{1}px ({2}B)",
-                    annotCrop.Width, annotCrop.Height, new FileInfo(annotCropPng).Length));
+                    "Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): {0}x{1}px (png={2}B, pdf={3}B ValidPdf={4})",
+                    annotCrop.Width, annotCrop.Height, new FileInfo(annotCropPng).Length, pdfHead.Length, validPdf));
             }
 
             using (RaceEventDocument reloaded = MeetDatabaseService.LoadNativeRacePackage(optrPath))

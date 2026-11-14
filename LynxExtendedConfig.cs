@@ -513,6 +513,7 @@ namespace OptiFinish
             else if (k == "PrintDlg.PrintResultsOn") PrintDialogOptions.PrintResultsOn = v == "1";
             else if (k == "PrintDlg.MaxResults" && int.TryParse(v, out iv)) PrintDialogOptions.MaxResults = Math.Max(1, iv);
             else if (k == "PrintDlg.ResultsRange") PrintDialogOptions.ResultsRange = v;
+            else if (k == "PrintDlg.PrinterName") PrintDialogOptions.PrinterName = v;
             else if (k == "SelectionFixedWidth" && int.TryParse(v, out iv)) SelectionFixedWidth = Math.Max(32, iv);
             else if (k == "SelectionFixedHeight" && int.TryParse(v, out iv)) SelectionFixedHeight = Math.Max(24, iv);
             else if (k == "ImageExportJpegQuality" && int.TryParse(v, out iv)) ImageExportJpegQuality = Math.Max(10, Math.Min(100, iv));
@@ -587,6 +588,7 @@ namespace OptiFinish
                 sb.AppendLine("PrintDlg.PrintResultsOn=" + (PrintDialogOptions.PrintResultsOn ? "1" : "0"));
                 sb.AppendLine("PrintDlg.MaxResults=" + PrintDialogOptions.MaxResults.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("PrintDlg.ResultsRange=" + (PrintDialogOptions.ResultsRange ?? ""));
+                sb.AppendLine("PrintDlg.PrinterName=" + (PrintDialogOptions.PrinterName ?? ""));
                 sb.AppendLine("SavedProfiles=" + string.Join("|", SavedProfiles.ToArray()));
                 sb.AppendLine("InstalledSerialNumbers=" + string.Join("|", InstalledSerialNumbers.ToArray()));
 

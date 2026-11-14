@@ -2179,6 +2179,11 @@ namespace OptiFinish.Core
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
+            if (ext == ".pdf")
+            {
+                SaveBitmapToPdfFile(bmp, filePath, bmp.Width >= bmp.Height);
+                return;
+            }
             if (ext == ".tga")
             {
                 SaveTga24(bmp, filePath);
@@ -2252,6 +2257,121 @@ namespace OptiFinish.Core
             finally
             {
                 bmp.UnlockBits(bd);
+            }
+        }
+
+        /// <summary>
+        /// Writes a standard single-page PDF 1.4 file embedding the bitmap via DCTDecode (JPEG),
+        /// completely bypassing the Windows Print Spooler so PDF export works even when all physical printers are offline.
+        /// </summary>
+        public static void SaveBitmapToPdfFile(Bitmap bmp, string filePath, bool landscape)
+        {
+            if (bmp == null || string.IsNullOrEmpty(filePath)) return;
+            string dir = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            int imgW = Math.Max(1, bmp.Width);
+            int imgH = Math.Max(1, bmp.Height);
+            byte[] jpgBytes;
+            using (Bitmap rgb = new Bitmap(imgW, imgH, PixelFormat.Format24bppRgb))
+            {
+                using (Graphics g = Graphics.FromImage(rgb))
+                {
+                    g.Clear(Color.White);
+                    g.DrawImage(bmp, 0, 0, imgW, imgH);
+                }
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    ImageCodecInfo jpegCodec = null;
+                    ImageCodecInfo[] codecs = ImageCodecInfo.GetImageEncoders();
+                    for (int i = 0; i < codecs.Length; i++)
+                    {
+                        if (codecs[i].FormatID == ImageFormat.Jpeg.Guid)
+                        {
+                            jpegCodec = codecs[i];
+                            break;
+                        }
+                    }
+                    if (jpegCodec != null)
+                    {
+                        using (EncoderParameters ep = new EncoderParameters(1))
+                        {
+                            ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 92L);
+                            rgb.Save(ms, jpegCodec, ep);
+                        }
+                    }
+                    else
+                    {
+                        rgb.Save(ms, ImageFormat.Jpeg);
+                    }
+                    jpgBytes = ms.ToArray();
+                }
+            }
+
+            double pageW = landscape ? 842.0 : 595.0;
+            double pageH = landscape ? 595.0 : 842.0;
+            double margin = 24.0;
+            double availW = pageW - margin * 2.0;
+            double availH = pageH - margin * 2.0;
+            double scale = Math.Min(availW / imgW, availH / imgH);
+            double drawW = imgW * scale;
+            double drawH = imgH * scale;
+            double drawX = margin + (availW - drawW) / 2.0;
+            double drawY = margin + (availH - drawH) / 2.0;
+
+            string contentStr = string.Format(CultureInfo.InvariantCulture,
+                "q\n{0:0.###} 0 0 {1:0.###} {2:0.###} {3:0.###} cm\n/Im0 Do\nQ\n",
+                drawW, drawH, drawX, drawY);
+            byte[] contentBytes = System.Text.Encoding.ASCII.GetBytes(contentStr);
+
+            long[] offsets = new long[6];
+            using (FileStream fs = File.Create(filePath))
+            {
+                byte[] hdr = new byte[]
+                {
+                    (byte)'%', (byte)'P', (byte)'D', (byte)'F', (byte)'-', (byte)'1', (byte)'.', (byte)'4', (byte)'\n',
+                    (byte)'%', 0xE2, 0xE3, 0xCF, 0xD3, (byte)'\n'
+                };
+                fs.Write(hdr, 0, hdr.Length);
+
+                Action<string> writeAscii = delegate(string s)
+                {
+                    byte[] b = System.Text.Encoding.ASCII.GetBytes(s);
+                    fs.Write(b, 0, b.Length);
+                };
+
+                offsets[1] = fs.Position;
+                writeAscii("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+                offsets[2] = fs.Position;
+                writeAscii("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+                offsets[3] = fs.Position;
+                writeAscii(string.Format(CultureInfo.InvariantCulture,
+                    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {0:0.###} {1:0.###}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+                    pageW, pageH));
+
+                offsets[4] = fs.Position;
+                writeAscii(string.Format(CultureInfo.InvariantCulture,
+                    "4 0 obj\n<< /Type /XObject /Subtype /Image /Width {0} /Height {1} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {2} >>\nstream\n",
+                    imgW, imgH, jpgBytes.Length));
+                fs.Write(jpgBytes, 0, jpgBytes.Length);
+                writeAscii("\nendstream\nendobj\n");
+
+                offsets[5] = fs.Position;
+                writeAscii(string.Format(CultureInfo.InvariantCulture,
+                    "5 0 obj\n<< /Length {0} >>\nstream\n", contentBytes.Length));
+                fs.Write(contentBytes, 0, contentBytes.Length);
+                writeAscii("endstream\nendobj\n");
+
+                long xrefPos = fs.Position;
+                writeAscii("xref\n0 6\n0000000000 65535 f \n");
+                for (int i = 1; i <= 5; i++)
+                {
+                    writeAscii(string.Format(CultureInfo.InvariantCulture, "{0:0000000000} 00000 n \n", offsets[i]));
+                }
+                writeAscii(string.Format(CultureInfo.InvariantCulture,
+                    "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{0}\n%%EOF\n", xrefPos));
             }
         }
 

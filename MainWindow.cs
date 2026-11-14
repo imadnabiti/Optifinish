@@ -1093,7 +1093,7 @@ namespace OptiFinish
             {
                 using (SaveFileDialog sfd = new SaveFileDialog())
                 {
-                    sfd.Filter = "OptiFinish Race Package (*.optr)|*.optr|JPEG Image (*.jpg)|*.jpg|PNG Image (*.png)|*.png|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga|LIF Official Results (*.lif)|*.lif";
+                    sfd.Filter = "OptiFinish Race Package (*.optr)|*.optr|PDF Document (*.pdf)|*.pdf|JPEG Image (*.jpg)|*.jpg|PNG Image (*.png)|*.png|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga|LIF Official Results (*.lif)|*.lif";
                     sfd.FileName = doc.GetEventCodeString() + ".optr";
                     if (sfd.ShowDialog(this) != DialogResult.OK) return;
                     path = sfd.FileName;
@@ -1103,6 +1103,15 @@ namespace OptiFinish
             if (ext == ".lif")
             {
                 MeetDatabaseService.ExportResultsLifOrCsv(doc, path);
+            }
+            else if (ext == ".pdf")
+            {
+                int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
+                CropWindow crop = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
+                using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(doc, ci, crop, LynxExtendedConfig.Instance.PrintDialogOptions))
+                {
+                    SlitScanEngine.SaveBitmapToPdfFile(bmp, path, LynxExtendedConfig.Instance.PrintSettings.Landscape);
+                }
             }
             else if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".tga")
             {
@@ -1817,24 +1826,41 @@ namespace OptiFinish
 
         private void OpenPrinterSetupDialog()
         {
-            try
+            using (Form f = new Form())
             {
-                using (System.Drawing.Printing.PrintDocument pd = new System.Drawing.Printing.PrintDocument())
-                using (PrintDialog dlg = new PrintDialog())
+                f.Text = "Printer Setup";
+                f.Size = new Size(420, 175);
+                f.FormBorderStyle = FormBorderStyle.FixedDialog;
+                f.StartPosition = FormStartPosition.CenterParent;
+                f.MaximizeBox = false;
+                f.MinimizeBox = false;
+                f.ShowInTaskbar = false;
+
+                Label lbl = new Label { Text = "Stampante / PDF:", AutoSize = true, Location = new Point(14, 20) };
+                ComboBox cb = new ComboBox { Location = new Point(120, 16), Width = 272, DropDownStyle = ComboBoxStyle.DropDownList };
+                LynxPrintPreviewDialog.PopulatePrinterCombo(cb, LynxExtendedConfig.Instance.PrintDialogOptions.PrinterName);
+
+                CheckBox chkLand = new CheckBox
                 {
-                    pd.DefaultPageSettings.Landscape = LynxExtendedConfig.Instance.PrintSettings.Landscape;
-                    dlg.Document = pd;
-                    if (dlg.ShowDialog(this) == DialogResult.OK)
-                    {
-                        LynxExtendedConfig.Instance.PrintSettings.Landscape = pd.DefaultPageSettings.Landscape;
-                        LynxExtendedConfig.Instance.Save();
-                        SetHelp("Printer settings updated.");
-                    }
+                    Text = "Orizzontale (Landscape)",
+                    AutoSize = true,
+                    Location = new Point(120, 50),
+                    Checked = LynxExtendedConfig.Instance.PrintSettings.Landscape
+                };
+
+                Button btnOk = new Button { Text = "OK", Location = new Point(220, 92), Size = new Size(82, 26), DialogResult = DialogResult.OK };
+                Button btnCancel = new Button { Text = "Cancel", Location = new Point(310, 92), Size = new Size(82, 26), DialogResult = DialogResult.Cancel };
+                f.AcceptButton = btnOk;
+                f.CancelButton = btnCancel;
+                f.Controls.AddRange(new Control[] { lbl, cb, chkLand, btnOk, btnCancel });
+
+                if (f.ShowDialog(this) == DialogResult.OK)
+                {
+                    LynxExtendedConfig.Instance.PrintDialogOptions.PrinterName = cb.SelectedItem != null ? cb.SelectedItem.ToString() : "";
+                    LynxExtendedConfig.Instance.PrintSettings.Landscape = chkLand.Checked;
+                    LynxExtendedConfig.Instance.Save();
+                    SetHelp("Printer settings updated: " + LynxExtendedConfig.Instance.PrintDialogOptions.PrinterName);
                 }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, "Printer setup unavailable:\n" + ex.Message, "Printer Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -1845,7 +1871,7 @@ namespace OptiFinish
             CropWindow cropOverride = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
             using (SaveFileDialog sfd = new SaveFileDialog())
             {
-                sfd.Filter = "JPEG Image (*.jpg)|*.jpg|PNG Image (*.png)|*.png|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga";
+                sfd.Filter = "JPEG Image (*.jpg)|*.jpg|PNG Image (*.png)|*.png|PDF Document (*.pdf)|*.pdf|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga";
                 sfd.FileName = ActiveDocument.GetEventCodeString() + ".jpg";
                 if (sfd.ShowDialog(this) == DialogResult.OK)
                 {
@@ -1890,6 +1916,7 @@ namespace OptiFinish
             cfg.PrintResultsOn = chosen.PrintResultsOn;
             cfg.MaxResults = chosen.MaxResults;
             cfg.ResultsRange = chosen.ResultsRange;
+            cfg.PrinterName = chosen.PrinterName ?? "";
             LynxExtendedConfig.Instance.Save();
         }
 
@@ -1904,7 +1931,7 @@ namespace OptiFinish
                 SavePrintDialogOptions(pdlg.Settings);
                 using (SaveFileDialog sfd = new SaveFileDialog())
                 {
-                    sfd.Filter = "PNG Official Image (*.png)|*.png|JPEG Image (*.jpg)|*.jpg|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga";
+                    sfd.Filter = "PNG Official Image (*.png)|*.png|PDF Document (*.pdf)|*.pdf|JPEG Image (*.jpg)|*.jpg|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga";
                     sfd.FileName = ActiveDocument.GetEventCodeString() + "_PhotoFinish.png";
                     if (sfd.ShowDialog(this) == DialogResult.OK)
                     {
@@ -1928,32 +1955,20 @@ namespace OptiFinish
                 if (pdlg.ShowDialog(this) != DialogResult.OK) return;
                 SavePrintDialogOptions(pdlg.Settings);
                 PrintDialogSettings printOpts = pdlg.Settings.Clone();
-                using (PrintPreviewDialog ppd = new PrintPreviewDialog())
-                using (System.Drawing.Printing.PrintDocument pd = new System.Drawing.Printing.PrintDocument())
+                using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(ActiveDocument, ci, cropOverride, printOpts))
+                using (LynxPrintPreviewDialog prev = new LynxPrintPreviewDialog(
+                    bmp,
+                    ActiveDocument.GetEventCodeString(),
+                    printOpts.PrinterName,
+                    LynxExtendedConfig.Instance.PrintSettings.Landscape))
                 {
-                    pd.DefaultPageSettings.Landscape = LynxExtendedConfig.Instance.PrintSettings.Landscape;
-                    pd.PrintPage += delegate(object s, System.Drawing.Printing.PrintPageEventArgs pe)
+                    prev.ShowDialog(this);
+                    if (!string.IsNullOrEmpty(prev.SelectedPrinterName))
                     {
-                        using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(ActiveDocument, ci, cropOverride, printOpts))
-                        {
-                            Rectangle bounds = pe.MarginBounds;
-                            double sx = (double)bounds.Width / Math.Max(1, bmp.Width);
-                            double sy = (double)bounds.Height / Math.Max(1, bmp.Height);
-                            double sc = Math.Min(sx, sy);
-                            int dw = Math.Max(1, (int)Math.Round(bmp.Width * sc));
-                            int dh = Math.Max(1, (int)Math.Round(bmp.Height * sc));
-                            int dx = bounds.X + (bounds.Width - dw) / 2;
-                            int dy = bounds.Y + (bounds.Height - dh) / 2;
-                            pe.Graphics.InterpolationMode = printOpts.Smooth
-                                ? System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
-                                : System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-                            pe.Graphics.DrawImage(bmp, new Rectangle(dx, dy, dw, dh));
-                        }
-                    };
-                    ppd.Document = pd;
-                    ppd.Width = 980;
-                    ppd.Height = 680;
-                    ppd.ShowDialog(this);
+                        LynxExtendedConfig.Instance.PrintDialogOptions.PrinterName = prev.SelectedPrinterName;
+                    }
+                    LynxExtendedConfig.Instance.PrintSettings.Landscape = prev.SelectedLandscape;
+                    LynxExtendedConfig.Instance.Save();
                 }
             }
         }
@@ -2247,20 +2262,29 @@ namespace OptiFinish
                 sb.AppendLine();
             }
             string summary = sb.ToString();
-            using (PrintPreviewDialog ppd = new PrintPreviewDialog())
-            using (System.Drawing.Printing.PrintDocument pd = new System.Drawing.Printing.PrintDocument())
+            using (Bitmap textBmp = new Bitmap(1100, 1400))
             {
-                pd.PrintPage += delegate(object s, System.Drawing.Printing.PrintPageEventArgs pe)
+                using (Graphics g = Graphics.FromImage(textBmp))
                 {
-                    using (Font f = new Font("Consolas", 9.5f))
+                    g.Clear(Color.White);
+                    using (Font f = new Font("Consolas", 14f))
                     {
-                        pe.Graphics.DrawString(summary, f, Brushes.Black, pe.MarginBounds);
+                        g.DrawString(summary, f, Brushes.Black, new RectangleF(40, 40, 1020, 1320));
                     }
-                };
-                ppd.Document = pd;
-                ppd.Width = 780;
-                ppd.Height = 560;
-                ppd.ShowDialog(this);
+                }
+                using (LynxPrintPreviewDialog prev = new LynxPrintPreviewDialog(
+                    textBmp,
+                    ActiveDocument.GetEventCodeString() + "_Splits",
+                    LynxExtendedConfig.Instance.PrintDialogOptions.PrinterName,
+                    false))
+                {
+                    prev.ShowDialog(this);
+                    if (!string.IsNullOrEmpty(prev.SelectedPrinterName))
+                    {
+                        LynxExtendedConfig.Instance.PrintDialogOptions.PrinterName = prev.SelectedPrinterName;
+                        LynxExtendedConfig.Instance.Save();
+                    }
+                }
             }
         }
 

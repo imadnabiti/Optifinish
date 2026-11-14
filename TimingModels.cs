@@ -108,6 +108,7 @@ namespace OptiFinish.Core
         public bool PrintResultsOn { get; set; }
         public int MaxResults { get; set; } // default 10
         public string ResultsRange { get; set; } // e.g. "" or "1-3" or "1,3,5"
+        public string PrinterName { get; set; } // "" = safe PDF / prompt default
 
         public PrintDialogSettings()
         {
@@ -122,6 +123,7 @@ namespace OptiFinish.Core
             PrintResultsOn = false;
             MaxResults = 10;
             ResultsRange = "";
+            PrinterName = "";
         }
 
         public PrintDialogSettings Clone()
@@ -138,7 +140,8 @@ namespace OptiFinish.Core
                 LimitResValue = LimitResValue,
                 PrintResultsOn = PrintResultsOn,
                 MaxResults = MaxResults,
-                ResultsRange = ResultsRange ?? ""
+                ResultsRange = ResultsRange ?? "",
+                PrinterName = PrinterName ?? ""
             };
         }
     }

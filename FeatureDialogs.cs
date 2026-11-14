@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Printing;
 using System.Globalization;
 using System.IO;
 using System.Windows.Forms;
@@ -1160,6 +1162,7 @@ namespace OptiFinish
         private TextBox _txtLimitRes;
         private RadioButton _rbPrOff, _rbPrOn;
         private TextBox _txtMaxResults, _txtRange;
+        private ComboBox _cbPrinter;
         private PictureBox _pbPreview;
         private Label _lblPreviewInfo;
         private bool _updatingControls;
@@ -1173,7 +1176,7 @@ namespace OptiFinish
             _cropOverride = cropOverride;
             _settings = initialSettings != null ? initialSettings.Clone() : new PrintDialogSettings();
 
-            DlgUi.StyleClassic(this, Loc.Evt("Image\\PrintDlg\\Title", "Print"), 760, 445);
+            DlgUi.StyleClassic(this, Loc.Evt("Image\\PrintDlg\\Title", "Print"), 760, 490);
 
             int y = 16;
             // Zoom row
@@ -1248,24 +1251,30 @@ namespace OptiFinish
             _txtRange = DlgUi.Tb(120, y + 3, 180, _settings.ResultsRange ?? "");
             Controls.Add(_txtRange);
 
+            y += 38;
+            Controls.Add(DlgUi.Lbl("Stampante / PDF:", 16, y + 3));
+            _cbPrinter = DlgUi.Cb(120, y + 3, 256);
+            LynxPrintPreviewDialog.PopulatePrinterCombo(_cbPrinter, _settings.PrinterName);
+            Controls.Add(_cbPrinter);
+
             // Live Cropped Thumbnail Preview on right
             GroupBox grpPrev = new GroupBox
             {
                 Text = "Preview",
                 Location = new Point(392, 12),
-                Size = new Size(340, 342)
+                Size = new Size(340, 386)
             };
             _pbPreview = new PictureBox
             {
                 Location = new Point(10, 20),
-                Size = new Size(320, 286),
+                Size = new Size(320, 326),
                 BorderStyle = BorderStyle.FixedSingle,
                 BackColor = Color.FromArgb(24, 24, 24),
                 SizeMode = PictureBoxSizeMode.Zoom
             };
             _lblPreviewInfo = new Label
             {
-                Location = new Point(10, 312),
+                Location = new Point(10, 352),
                 Size = new Size(320, 24),
                 ForeColor = Color.FromArgb(40, 40, 40),
                 Text = ""
@@ -1274,11 +1283,32 @@ namespace OptiFinish
             grpPrev.Controls.Add(_lblPreviewInfo);
             Controls.Add(grpPrev);
 
-            Button btnOk = DlgUi.Btn("OK", 554, 366, 86, DialogResult.OK);
-            Button btnCancel = DlgUi.Btn("Cancel", 646, 366, 86, DialogResult.Cancel);
+            Button btnPrev = new Button { Text = "Anteprima...", Location = new Point(440, 412), Size = new Size(106, 25) };
+            Button btnOk = DlgUi.Btn("OK", 554, 412, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 646, 412, 86, DialogResult.Cancel);
+            btnPrev.Click += delegate
+            {
+                ReadControlsIntoSettings();
+                using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(_doc, _cameraIndex, _cropOverride, _settings))
+                using (LynxPrintPreviewDialog prev = new LynxPrintPreviewDialog(
+                    bmp,
+                    _doc != null ? _doc.GetEventCodeString() : "OptiFinish",
+                    _settings.PrinterName,
+                    LynxExtendedConfig.Instance.PrintSettings.Landscape))
+                {
+                    prev.ShowDialog(this);
+                    if (!string.IsNullOrEmpty(prev.SelectedPrinterName))
+                    {
+                        _settings.PrinterName = prev.SelectedPrinterName;
+                        LynxPrintPreviewDialog.SelectPrinterInCombo(_cbPrinter, _settings.PrinterName);
+                    }
+                    LynxExtendedConfig.Instance.PrintSettings.Landscape = prev.SelectedLandscape;
+                }
+            };
             btnOk.Click += delegate { ReadControlsIntoSettings(); };
             AcceptButton = btnOk;
             CancelButton = btnCancel;
+            Controls.Add(btnPrev);
             Controls.Add(btnOk);
             Controls.Add(btnCancel);
 
@@ -1357,6 +1387,7 @@ namespace OptiFinish
             int mr;
             if (int.TryParse(_txtMaxResults.Text.Trim(), out mr)) _settings.MaxResults = Math.Max(1, Math.Min(200, mr));
             _settings.ResultsRange = _txtRange.Text.Trim();
+            _settings.PrinterName = (_cbPrinter != null && _cbPrinter.SelectedItem != null) ? _cbPrinter.SelectedItem.ToString() : "";
         }
 
         private void UpdatePreview()
@@ -2059,6 +2090,376 @@ namespace OptiFinish
             Controls.Add(topics);
             Controls.Add(viewer);
             Controls.Add(btnClose);
+        }
+    }
+
+    // 22. Spooler-Free In-Memory Print Preview with Pre-Print Printer Selector & Direct PDF Export
+    public sealed class LynxPrintPreviewDialog : Form
+    {
+        public const string DirectPdfOption = "[PDF] Salva PDF diretto (Senza Stampante)";
+
+        private readonly Bitmap _sourceBitmap;
+        private readonly string _docTitle;
+        private readonly ComboBox _cbPrinter;
+        private readonly CheckBox _chkLandscape;
+        private readonly ComboBox _cbZoom;
+        private readonly Panel _scrollHost;
+        private readonly PictureBox _pbSheet;
+
+        public string SelectedPrinterName { get; private set; }
+        public bool SelectedLandscape { get; private set; }
+
+        public LynxPrintPreviewDialog(Bitmap contentBitmap, string docTitle, string initialPrinterName, bool initialLandscape)
+        {
+            _sourceBitmap = contentBitmap != null ? new Bitmap(contentBitmap) : new Bitmap(640, 360);
+            _docTitle = string.IsNullOrEmpty(docTitle) ? "OptiFinish" : docTitle;
+            SelectedLandscape = initialLandscape;
+
+            Text = "Anteprima di Stampa - " + _docTitle;
+            Size = new Size(1020, 720);
+            MinimumSize = new Size(760, 500);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            BackColor = SystemColors.Control;
+            Font = new Font("Segoe UI", 8.5f);
+
+            Panel topBar = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 44,
+                BackColor = SystemColors.Control
+            };
+
+            Label lblPrinter = new Label
+            {
+                Text = "Stampante:",
+                AutoSize = true,
+                Location = new Point(10, 14)
+            };
+
+            _cbPrinter = new ComboBox
+            {
+                Location = new Point(78, 10),
+                Width = 270,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            PopulatePrinterCombo(_cbPrinter, initialPrinterName);
+
+            _chkLandscape = new CheckBox
+            {
+                Text = "Orizzontale",
+                AutoSize = true,
+                Location = new Point(358, 13),
+                Checked = initialLandscape
+            };
+
+            Label lblZoom = new Label
+            {
+                Text = "Zoom:",
+                AutoSize = true,
+                Location = new Point(454, 14)
+            };
+
+            _cbZoom = new ComboBox
+            {
+                Location = new Point(496, 10),
+                Width = 104,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            _cbZoom.Items.AddRange(new object[] { "Adatta", "75%", "100%", "150%" });
+            _cbZoom.SelectedIndex = 0;
+
+            Button btnSavePdf = new Button
+            {
+                Text = "Salva PDF...",
+                Location = new Point(612, 9),
+                Size = new Size(104, 26)
+            };
+
+            Button btnPrint = new Button
+            {
+                Text = "Stampa...",
+                Location = new Point(722, 9),
+                Size = new Size(96, 26)
+            };
+
+            Button btnClose = new Button
+            {
+                Text = "Chiudi",
+                Location = new Point(824, 9),
+                Size = new Size(80, 26),
+                DialogResult = DialogResult.OK
+            };
+
+            topBar.Controls.AddRange(new Control[]
+            {
+                lblPrinter, _cbPrinter, _chkLandscape, lblZoom, _cbZoom, btnSavePdf, btnPrint, btnClose
+            });
+
+            _scrollHost = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                BackColor = Color.FromArgb(82, 86, 89)
+            };
+
+            _pbSheet = new PictureBox
+            {
+                SizeMode = PictureBoxSizeMode.AutoSize,
+                BackColor = Color.FromArgb(82, 86, 89)
+            };
+            _scrollHost.Controls.Add(_pbSheet);
+
+            Controls.Add(_scrollHost);
+            Controls.Add(topBar);
+            CancelButton = btnClose;
+
+            _cbPrinter.SelectedIndexChanged += delegate
+            {
+                SelectedPrinterName = _cbPrinter.SelectedItem != null ? _cbPrinter.SelectedItem.ToString() : DirectPdfOption;
+            };
+            _chkLandscape.CheckedChanged += delegate
+            {
+                SelectedLandscape = _chkLandscape.Checked;
+                RenderVirtualSheet();
+            };
+            _cbZoom.SelectedIndexChanged += delegate { RenderVirtualSheet(); };
+            _scrollHost.Resize += delegate
+            {
+                if (_cbZoom.SelectedIndex == 0) RenderVirtualSheet();
+            };
+
+            btnSavePdf.Click += delegate { SaveDirectPdf(); };
+            btnPrint.Click += delegate { ExecutePrint(); };
+            btnClose.Click += delegate
+            {
+                SelectedPrinterName = _cbPrinter.SelectedItem != null ? _cbPrinter.SelectedItem.ToString() : DirectPdfOption;
+                SelectedLandscape = _chkLandscape.Checked;
+            };
+
+            SelectedPrinterName = _cbPrinter.SelectedItem != null ? _cbPrinter.SelectedItem.ToString() : DirectPdfOption;
+            RenderVirtualSheet();
+        }
+
+        public static void PopulatePrinterCombo(ComboBox cb, string preferredPrinter)
+        {
+            if (cb == null) return;
+            cb.Items.Clear();
+            cb.Items.Add(DirectPdfOption);
+
+            List<string> installed = new List<string>();
+            try
+            {
+                foreach (string name in PrinterSettings.InstalledPrinters)
+                {
+                    if (!string.IsNullOrWhiteSpace(name)) installed.Add(name);
+                }
+            }
+            catch { }
+
+            for (int i = 0; i < installed.Count; i++)
+            {
+                if (installed[i].IndexOf("Microsoft Print to PDF", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    cb.Items.Add(installed[i]);
+                }
+            }
+            for (int i = 0; i < installed.Count; i++)
+            {
+                if (installed[i].IndexOf("Microsoft Print to PDF", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    cb.Items.Add(installed[i]);
+                }
+            }
+
+            SelectPrinterInCombo(cb, preferredPrinter);
+        }
+
+        public static void SelectPrinterInCombo(ComboBox cb, string printerName)
+        {
+            if (cb == null || cb.Items.Count == 0) return;
+            if (!string.IsNullOrWhiteSpace(printerName))
+            {
+                for (int i = 0; i < cb.Items.Count; i++)
+                {
+                    if (string.Equals(cb.Items[i].ToString(), printerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cb.SelectedIndex = i;
+                        return;
+                    }
+                }
+            }
+            // Never default to an offline physical printer; prefer direct PDF writer
+            cb.SelectedIndex = 0;
+        }
+
+        private void RenderVirtualSheet()
+        {
+            if (_sourceBitmap == null || _scrollHost.ClientSize.Width <= 40) return;
+
+            bool landscape = _chkLandscape.Checked;
+            double pageAspect = landscape ? (842.0 / 595.0) : (595.0 / 842.0);
+
+            int baseW = landscape ? 980 : 690;
+            int baseH = (int)Math.Round(baseW / pageAspect);
+
+            int availW = Math.Max(220, _scrollHost.ClientSize.Width - 48);
+            int availH = Math.Max(220, _scrollHost.ClientSize.Height - 48);
+
+            int sheetW, sheetH;
+            int zIdx = _cbZoom.SelectedIndex;
+            if (zIdx == 0)
+            {
+                double fitScale = Math.Min((double)availW / baseW, (double)availH / baseH);
+                fitScale = Math.Max(0.25, Math.Min(2.0, fitScale));
+                sheetW = Math.Max(180, (int)Math.Round(baseW * fitScale));
+                sheetH = Math.Max(180, (int)Math.Round(baseH * fitScale));
+            }
+            else
+            {
+                double factor = zIdx == 1 ? 0.75 : (zIdx == 3 ? 1.50 : 1.00);
+                sheetW = Math.Max(180, (int)Math.Round(baseW * factor));
+                sheetH = Math.Max(180, (int)Math.Round(baseH * factor));
+            }
+
+            int pad = 16;
+            Bitmap canvas = new Bitmap(sheetW + pad * 2, sheetH + pad * 2);
+            using (Graphics g = Graphics.FromImage(canvas))
+            {
+                g.Clear(Color.FromArgb(82, 86, 89));
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                Rectangle shadow = new Rectangle(pad + 4, pad + 4, sheetW, sheetH);
+                using (SolidBrush sb = new SolidBrush(Color.FromArgb(52, 54, 56)))
+                {
+                    g.FillRectangle(sb, shadow);
+                }
+
+                Rectangle pageRect = new Rectangle(pad, pad, sheetW, sheetH);
+                g.FillRectangle(Brushes.White, pageRect);
+                g.DrawRectangle(Pens.DimGray, pageRect);
+
+                int margin = Math.Max(10, (int)Math.Round(Math.Min(sheetW, sheetH) * 0.035));
+                Rectangle inner = new Rectangle(
+                    pageRect.X + margin,
+                    pageRect.Y + margin,
+                    Math.Max(10, pageRect.Width - margin * 2),
+                    Math.Max(10, pageRect.Height - margin * 2));
+
+                double sx = (double)inner.Width / Math.Max(1, _sourceBitmap.Width);
+                double sy = (double)inner.Height / Math.Max(1, _sourceBitmap.Height);
+                double sc = Math.Min(sx, sy);
+                int dw = Math.Max(1, (int)Math.Round(_sourceBitmap.Width * sc));
+                int dh = Math.Max(1, (int)Math.Round(_sourceBitmap.Height * sc));
+                int dx = inner.X + (inner.Width - dw) / 2;
+                int dy = inner.Y + (inner.Height - dh) / 2;
+
+                g.DrawImage(_sourceBitmap, new Rectangle(dx, dy, dw, dh));
+            }
+
+            Image old = _pbSheet.Image;
+            _pbSheet.Image = canvas;
+            if (old != null) old.Dispose();
+
+            int left = Math.Max(0, (_scrollHost.ClientSize.Width - canvas.Width) / 2);
+            int top = Math.Max(0, (_scrollHost.ClientSize.Height - canvas.Height) / 2);
+            _pbSheet.Location = new Point(left, top);
+        }
+
+        private void SaveDirectPdf()
+        {
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Filter = "PDF Document (*.pdf)|*.pdf";
+                sfd.FileName = _docTitle + "_PhotoFinish.pdf";
+                if (sfd.ShowDialog(this) == DialogResult.OK)
+                {
+                    SlitScanEngine.SaveBitmapToPdfFile(_sourceBitmap, sfd.FileName, _chkLandscape.Checked);
+                    MessageBox.Show(this, "PDF salvato:\n" + sfd.FileName, "Esporta PDF", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+        }
+
+        private void ExecutePrint()
+        {
+            string chosen = _cbPrinter.SelectedItem != null ? _cbPrinter.SelectedItem.ToString() : DirectPdfOption;
+            SelectedPrinterName = chosen;
+            SelectedLandscape = _chkLandscape.Checked;
+
+            if (string.Equals(chosen, DirectPdfOption, StringComparison.Ordinal))
+            {
+                SaveDirectPdf();
+                return;
+            }
+
+            Cursor prevCursor = Cursor;
+            try
+            {
+                Cursor = Cursors.WaitCursor;
+                using (PrintDocument pd = new PrintDocument())
+                {
+                    pd.PrinterSettings.PrinterName = chosen;
+                    if (!pd.PrinterSettings.IsValid)
+                    {
+                        throw new InvalidOperationException("La stampante selezionata non è valida o non è connessa: " + chosen);
+                    }
+                    pd.DocumentName = _docTitle;
+                    pd.DefaultPageSettings.Landscape = _chkLandscape.Checked;
+                    pd.PrintController = new StandardPrintController();
+                    pd.PrintPage += delegate(object s, PrintPageEventArgs pe)
+                    {
+                        Rectangle bounds = pe.MarginBounds;
+                        double sx = (double)bounds.Width / Math.Max(1, _sourceBitmap.Width);
+                        double sy = (double)bounds.Height / Math.Max(1, _sourceBitmap.Height);
+                        double sc = Math.Min(sx, sy);
+                        int dw = Math.Max(1, (int)Math.Round(_sourceBitmap.Width * sc));
+                        int dh = Math.Max(1, (int)Math.Round(_sourceBitmap.Height * sc));
+                        int dx = bounds.X + (bounds.Width - dw) / 2;
+                        int dy = bounds.Y + (bounds.Height - dh) / 2;
+                        pe.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        pe.Graphics.DrawImage(_sourceBitmap, new Rectangle(dx, dy, dw, dh));
+                    };
+                    pd.Print();
+                }
+            }
+            catch (Exception ex)
+            {
+                Cursor = prevCursor;
+                DialogResult dr = MessageBox.Show(
+                    this,
+                    "Impossibile stampare su '" + chosen + "':\n" + ex.Message +
+                    "\n\nVuoi salvare invece un file PDF diretto (senza passare dallo spooler stampante)?",
+                    "Errore Stampante",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (dr == DialogResult.Yes)
+                {
+                    SaveDirectPdf();
+                }
+                return;
+            }
+            finally
+            {
+                Cursor = prevCursor;
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_pbSheet != null && _pbSheet.Image != null)
+                {
+                    _pbSheet.Image.Dispose();
+                    _pbSheet.Image = null;
+                }
+                if (_sourceBitmap != null)
+                {
+                    _sourceBitmap.Dispose();
+                }
+            }
+            base.Dispose(disposing);
         }
     }
 }
