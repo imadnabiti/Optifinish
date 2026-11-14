@@ -316,7 +316,7 @@ namespace OptiFinish
                 RowTemplate = { Height = 19 },
                 EnableHeadersVisualStyles = false,
                 GridColor = Color.FromArgb(190, 190, 190),
-                EditMode = DataGridViewEditMode.EditOnEnter
+                EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2
             };
             _dgvInfo.ColumnHeadersDefaultCellStyle.BackColor = SystemColors.Control;
             _dgvInfo.ColumnHeadersDefaultCellStyle.ForeColor = SystemColors.ControlText;
@@ -366,6 +366,24 @@ namespace OptiFinish
             }
         }
 
+        private void SafeDefer(Action act)
+        {
+            if (act == null || IsDisposed) return;
+            if (IsHandleCreated)
+            {
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (!IsDisposed) act();
+                    });
+                    return;
+                }
+                catch { }
+            }
+            act();
+        }
+
         private void OnInfoCellClick(object sender, DataGridViewCellEventArgs e)
         {
             if (_doc == null || e.RowIndex < 0) return;
@@ -373,12 +391,18 @@ namespace OptiFinish
 
             if (tag == "WIND" && (e.ColumnIndex == 3 || e.ColumnIndex == 4))
             {
-                if (ManualWindRequested != null) ManualWindRequested(this, EventArgs.Empty);
+                SafeDefer(delegate
+                {
+                    if (ManualWindRequested != null) ManualWindRequested(this, EventArgs.Empty);
+                });
                 return;
             }
             if (tag == "START" && (e.ColumnIndex >= 1))
             {
-                if (ManualStartRequested != null) ManualStartRequested(this, EventArgs.Empty);
+                SafeDefer(delegate
+                {
+                    if (ManualStartRequested != null) ManualStartRequested(this, EventArgs.Empty);
+                });
                 return;
             }
             if (tag.StartsWith("CAM:"))
@@ -390,14 +414,17 @@ namespace OptiFinish
                     if (e.ColumnIndex == 0)
                     {
                         _doc.Cameras[ci].IsEnabled = !_doc.Cameras[ci].IsEnabled;
-                        RefreshInformationGrid();
+                        SafeDefer(delegate { RefreshInformationGrid(); });
                     }
                     else if (e.ColumnIndex == 6)
                     {
                         _doc.Cameras[ci].Orientation = _doc.Cameras[ci].Orientation == StripOrientation.LeftToRight
                             ? StripOrientation.RightToLeft : StripOrientation.LeftToRight;
-                        RefreshInformationGrid();
-                        InvalidateViewports();
+                        SafeDefer(delegate
+                        {
+                            RefreshInformationGrid();
+                            InvalidateViewports();
+                        });
                     }
                 }
             }
@@ -411,7 +438,10 @@ namespace OptiFinish
             {
                 int ci;
                 if (int.TryParse(tag.Substring(4), out ci)) _activeCamIdx = ci;
-                if (OpenCameraSettingsRequested != null) OpenCameraSettingsRequested(this, EventArgs.Empty);
+                SafeDefer(delegate
+                {
+                    if (OpenCameraSettingsRequested != null) OpenCameraSettingsRequested(this, EventArgs.Empty);
+                });
             }
         }
 
@@ -431,8 +461,11 @@ namespace OptiFinish
                 else if (e.ColumnIndex == 3 && int.TryParse(val, out iv)) _doc.RoundNumber = iv;
                 else if (e.ColumnIndex == 4 && int.TryParse(val, out iv)) _doc.HeatNumber = iv;
                 else if (e.ColumnIndex == 5 && double.TryParse(val.Replace("m", "").Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out dv)) _doc.DistanceMeters = dv;
-                RefreshAll();
-                NotifyModified();
+                SafeDefer(delegate
+                {
+                    RefreshAll();
+                    NotifyModified();
+                });
             }
             else if (tag == "WIND" && e.ColumnIndex == 2)
             {
@@ -445,8 +478,11 @@ namespace OptiFinish
                 {
                     _doc.HasWindReading = false;
                 }
-                RefreshInformationGrid();
-                NotifyModified();
+                SafeDefer(delegate
+                {
+                    RefreshInformationGrid();
+                    NotifyModified();
+                });
             }
             else if (tag == "LAPTIME")
             {
@@ -454,7 +490,10 @@ namespace OptiFinish
                 else if (e.ColumnIndex == 3 && int.TryParse(val, out iv)) _doc.LapsPerSplit = Math.Max(1, iv);
                 else if (e.ColumnIndex == 4 && double.TryParse(val.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out dv)) _doc.MinValidSplitSeconds = dv;
                 else if (e.ColumnIndex == 5 && double.TryParse(val.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out dv)) _doc.MaxValidSplitSeconds = dv;
-                NotifyModified();
+                SafeDefer(delegate
+                {
+                    NotifyModified();
+                });
             }
             else if (tag.StartsWith("CAM:"))
             {
@@ -465,9 +504,12 @@ namespace OptiFinish
                     if (e.ColumnIndex == 2 && int.TryParse(val, out iv) && iv >= 10) cam.SampleRateHz = iv;
                     else if (e.ColumnIndex == 3 && int.TryParse(val, out iv) && iv >= 60) cam.FrameHeightPx = iv;
                     else if (e.ColumnIndex == 5 && int.TryParse(val, out iv)) cam.GainPercent = iv;
-                    RefreshCameraBars();
-                    InvalidateViewports();
-                    NotifyModified();
+                    SafeDefer(delegate
+                    {
+                        RefreshCameraBars();
+                        InvalidateViewports();
+                        NotifyModified();
+                    });
                 }
             }
         }
@@ -962,6 +1004,10 @@ namespace OptiFinish
                 _btnInfoArmBox.BackColor = _doc.IsArmed ? Color.Yellow : SystemColors.Control;
                 _btnInfoCapBox.BackColor = _doc.IsCapturing ? Color.Lime : SystemColors.Control;
             }
+            catch (InvalidOperationException)
+            {
+                if (IsHandleCreated) SafeDefer(delegate { RefreshInformationGrid(); });
+            }
             finally
             {
                 _updatingInfoGrid = false;
@@ -1029,6 +1075,10 @@ namespace OptiFinish
                     int rIdx = _dgvResults.Rows.Add(vals);
                     _dgvResults.Rows[rIdx].Tag = c;
                 }
+            }
+            catch (InvalidOperationException)
+            {
+                if (IsHandleCreated) SafeDefer(delegate { RefreshResultsGrid(); });
             }
             finally
             {
@@ -1310,9 +1360,12 @@ namespace OptiFinish
                 if (!double.IsNaN(t) && t > 0) { c.RawTimeSeconds = t; c.Status = CompetitorStatus.Valid; c.IsManualTime = true; }
                 else if (string.IsNullOrEmpty(val)) { c.RawTimeSeconds = double.NaN; }
             }
-            RefreshResultsGrid();
-            InvalidateViewports();
-            NotifyModified();
+            SafeDefer(delegate
+            {
+                RefreshResultsGrid();
+                InvalidateViewports();
+                NotifyModified();
+            });
         }
 
         private static void AddCheckItem(ToolStripItemCollection items, string text, bool isChecked, EventHandler click)
