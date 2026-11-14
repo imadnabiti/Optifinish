@@ -928,21 +928,22 @@ namespace OptiFinish.UI
 
                 for (int ln = 1; ln <= lanes; ln++)
                 {
+                    int dispLane = cam.ReverseLaneOrder ? (lanes - ln + 1) : ln;
                     float rLaneCenter = hasCalibLanes
                         ? 0.5f * (calibBounds[ln - 1] + calibBounds[ln])
                         : (_document.LaneTopRatio + (_document.LaneBottomRatio - _document.LaneTopRatio) * ((ln - 0.5f) / Math.Max(1, lanes)));
                     float ly = StripRatioToScreenY(rLaneCenter, imgRect, vTop, vBot);
                     if (ly < imgRect.Top - 8f || ly > imgRect.Bottom + 8f) continue;
-                    bool isHovered = (ln == activeLane);
+                    bool isHovered = (dispLane == activeLane);
                     RectangleF pill = new RectangleF(gx + 4f, ly - 10f, LaneGutterWidthPx - 8f, 20f);
                     if (isHovered)
                     {
                         g.FillRectangle(HoveredPillBgBrush, pill);
-                        g.DrawString("L" + ln, LanePillFont, DarkNavyBrush, pill, CenteredFormat);
+                        g.DrawString("L" + dispLane, LanePillFont, DarkNavyBrush, pill, CenteredFormat);
                     }
                     else
                     {
-                        g.DrawString("L" + ln, LanePillFont, NormalPillFgBrush, pill, CenteredFormat);
+                        g.DrawString("L" + dispLane, LanePillFont, NormalPillFgBrush, pill, CenteredFormat);
                     }
                 }
             }
@@ -1812,6 +1813,18 @@ namespace OptiFinish.UI
                 }
             };
             menu.Items.Add(itemEvalLane);
+
+            ToolStripMenuItem itemEvalZero = new ToolStripMenuItem(
+                string.Format(CultureInfo.InvariantCulture, "Evaluate Zero Control / Gun Delta (0.0001s): {0}",
+                    CompetitorEntry.FormatSeconds(_cursorTimeSeconds, TimePrecision.TenThousandths)));
+            itemEvalZero.Click += delegate
+            {
+                if (QuickEvaluateRequested != null)
+                {
+                    QuickEvaluateRequested(this, new HairlineChangedEventArgs(_cursorTimeSeconds, _cursorVerticalRatio, 0));
+                }
+            };
+            menu.Items.Add(itemEvalZero);
 
             ToolStripMenuItem itemNextObj = new ToolStripMenuItem("Find Next Runner >>");
             itemNextObj.Click += delegate

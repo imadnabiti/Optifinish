@@ -1911,20 +1911,10 @@ namespace OptiFinish.Core
             float srcY = vTop * strip.Height;
             float srcH = Math.Max(2f, (vBot - vTop) * strip.Height);
 
-            int zoom = Math.Max(1, Math.Min(8, printCfg.Zoom));
-            int dpiFactor = printCfg.LimitResOn ? 1 : (printCfg.Dpi >= 1200 ? 2 : 1);
-            int stripLeft = printCfg.LaneBarsOn ? 48 : 16;
-            int desiredStripW = Math.Max(900, Math.Min(3600, srcW * zoom * dpiFactor));
-            int outW = Math.Max(1100, Math.Min(3680, desiredStripW + stripLeft + 16));
-            int stripDrawW = outW - stripLeft - 16;
-
-            double heightScale = Math.Max(0.4, Math.Min(2.5, printCfg.UseCentimeters ? (printCfg.ImageHeight / 10.87) : (printCfg.ImageHeight / 4.28)));
-            double vStretch = Math.Max(0.5, Math.Min(3.0, cam.VerticalStretch > 0.1 ? cam.VerticalStretch : 1.0));
-            int stripH = Math.Max(180, Math.Min(1800, (int)Math.Round(srcH * heightScale * vStretch)));
-
-            int headerH = 72;
-            int rulerH = 32;
-            int tableRowH = 26;
+            double tStart = cam.ColumnToTimeSeconds(sCol);
+            double tEnd = cam.ColumnToTimeSeconds(eCol);
+            double tMin = Math.Min(tStart, tEnd);
+            double tMax = Math.Max(tStart, tEnd);
 
             doc.RecalculatePlaces();
             List<CompetitorEntry> sorted = new List<CompetitorEntry>();
@@ -1952,61 +1942,109 @@ namespace OptiFinish.Core
                         printableRows.Add(sorted[i]);
                     }
                 }
+                if (printableRows.Count == 0)
+                {
+                    if (sorted.Count > 0)
+                    {
+                        for (int i = 0; i < sorted.Count; i++)
+                        {
+                            if (sorted[i].HasValidNumericTime) printableRows.Add(sorted[i]);
+                        }
+                        if (printableRows.Count == 0) printableRows.Add(sorted[0]);
+                    }
+                    else if (tMin <= 0.1 && tMax >= -0.1)
+                    {
+                        printableRows.Add(new CompetitorEntry
+                        {
+                            Place = 1,
+                            Lane = 0,
+                            BibId = "",
+                            FirstName = "",
+                            LastName = "",
+                            Affiliation = "",
+                            RawTimeSeconds = -0.0003,
+                            EvaluatedTimeSeconds = -0.0003,
+                            PrecisionOverride = TimePrecision.TenThousandths,
+                            Status = CompetitorStatus.Valid,
+                            HasImageEvaluation = true
+                        });
+                    }
+                }
             }
 
-            int tableH = printCfg.PrintResultsOn ? (44 + Math.Max(1, printableRows.Count) * tableRowH + 20) : 16;
-            int outH = headerH + rulerH + stripH + tableH;
+            int zoom = Math.Max(1, Math.Min(8, printCfg.Zoom));
+            int dpiFactor = printCfg.LimitResOn ? 1 : (printCfg.Dpi >= 1200 ? 2 : 1);
+            int barW = printCfg.LaneBarsOn ? 24 : 0;
+            int rawTargetW = Math.Max(880, Math.Min(3200, srcW * zoom * dpiFactor));
+            int outW = Math.Max(1240, Math.Min(3680, rawTargetW + barW * 2 + 180));
+            int maxInnerW = outW - barW * 2 - 160;
+            int stripDrawW = rawTargetW < maxInnerW ? Math.Max(980, rawTargetW) : maxInnerW;
+            stripDrawW = Math.Min(maxInnerW, stripDrawW);
+            int stripLeft = (outW - stripDrawW) / 2;
+
+            double heightScale = Math.Max(0.4, Math.Min(2.5, printCfg.UseCentimeters ? (printCfg.ImageHeight / 10.87) : (printCfg.ImageHeight / 4.28)));
+            double vStretch = Math.Max(0.5, Math.Min(3.0, cam.VerticalStretch > 0.1 ? cam.VerticalStretch : 1.0));
+
+            int headerH = 128;
+            int stripTop = headerH + 22;
+            int tableRowH = 30;
+            int tableH = printCfg.PrintResultsOn ? (44 + Math.Max(1, printableRows.Count) * tableRowH + 28) : 16;
+            int footerH = 44;
+
+            int stripH = Math.Max(220, Math.Min(1600, (int)Math.Round(srcH * heightScale * vStretch)));
+            int minPortraitH = (outW <= 1400) ? (int)Math.Round(outW * (842.0 / 595.0)) : 0;
+            if (outW <= 1400 && srcH >= 700)
+            {
+                int availPortraitStripH = Math.Max(stripH, minPortraitH - stripTop - 52 - tableH - footerH - 20);
+                int scaledPortrait = (int)Math.Round(availPortraitStripH * Math.Min(1.25, heightScale));
+                stripH = Math.Max(stripH, Math.Min(availPortraitStripH, scaledPortrait));
+            }
+            int neededOutH = stripTop + stripH + 52 + tableH + footerH + 16;
+            int outH = Math.Max(minPortraitH, neededOutH);
 
             Bitmap composite = new Bitmap(outW, outH, PixelFormat.Format24bppRgb);
             using (Graphics g = Graphics.FromImage(composite))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-                g.Clear(Color.FromArgb(248, 250, 252));
+                g.Clear(Color.White);
 
-                double tStart = cam.ColumnToTimeSeconds(sCol);
-                double tEnd = cam.ColumnToTimeSeconds(eCol);
-                double tMin = Math.Min(tStart, tEnd);
-                double tMax = Math.Max(tStart, tEnd);
-
-                // 1. Top Official Banner
-                Rectangle headerRect = new Rectangle(0, 0, outW, headerH);
-                using (LinearGradientBrush hb = new LinearGradientBrush(
-                    headerRect,
-                    Color.FromArgb(15, 23, 42),
-                    Color.FromArgb(30, 58, 138),
-                    0f))
+                // 1. Official White-Page Header (matching FinishLynx printout / afsaf.pdf)
+                using (Font metaFont = new Font("Segoe UI", 9.5f, FontStyle.Regular))
+                using (Font h1Font = new Font("Segoe UI", 12.5f, FontStyle.Bold))
+                using (Font h2Font = new Font("Segoe UI", 11.5f, FontStyle.Bold))
+                using (Font h3Font = new Font("Segoe UI", 11f, FontStyle.Bold))
+                using (StringFormat centerFmt = new StringFormat { Alignment = StringAlignment.Center })
+                using (StringFormat rightFmt = new StringFormat { Alignment = StringAlignment.Far })
                 {
-                    g.FillRectangle(hb, headerRect);
+                    string printStamp = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+                    g.DrawString(printStamp, metaFont, Brushes.Black, 20f, 18f);
+
+                    string topLine = !string.IsNullOrEmpty(doc.CompetitionName)
+                        ? (doc.CompetitionName + " - " + doc.EventName)
+                        : doc.EventName;
+                    g.DrawString(topLine, h1Font, Brushes.Black, new RectangleF(180f, 16f, outW - 360f, 28f), centerFmt);
+
+                    string camLine = (!string.IsNullOrEmpty(cam.PositionLabel) ? cam.PositionLabel : "Photofinish") + " - " + cam.DisplayName;
+                    g.DrawString(camLine, h2Font, Brushes.Black, new RectangleF(180f, 48f, outW - 360f, 26f), centerFmt);
+
+                    string startLine = string.Format(CultureInfo.InvariantCulture, "Start: {0:dd/MM/yyyy HH:mm:ss.ff}", doc.GunTimeOfDay);
+                    g.DrawString(startLine, h3Font, Brushes.Black, new RectangleF(180f, 80f, outW - 360f, 24f), centerFmt);
+
+                    string serial = (cam.Profile != null && !string.IsNullOrEmpty(cam.Profile.SerialNumber))
+                        ? cam.Profile.SerialNumber : "";
+                    if (!string.IsNullOrEmpty(serial))
+                    {
+                        g.DrawString("Camera S/N: " + serial, metaFont, Brushes.Black, new RectangleF(outW - 240f, 48f, 220f, 22f), rightFmt);
+                    }
+                    if (doc.HasWindReading)
+                    {
+                        g.DrawString("Wind: " + doc.GetWindFormatted(), metaFont, Brushes.Black, new RectangleF(outW - 240f, 74f, 220f, 22f), rightFmt);
+                    }
                 }
 
-                using (Font titleFont = new Font("Segoe UI", 15f, FontStyle.Bold))
-                using (Font subFont = new Font("Segoe UI", 9.5f, FontStyle.Regular))
-                using (SolidBrush whiteBrush = new SolidBrush(Color.White))
-                using (SolidBrush mutedBrush = new SolidBrush(Color.FromArgb(203, 213, 225)))
-                {
-                    string cropTag = effCrop != null
-                        ? string.Format(CultureInfo.InvariantCulture, "   [Crop: {0:0.000}s – {1:0.000}s]", tMin, tMax)
-                        : "";
-                    string title = string.Format(CultureInfo.InvariantCulture, "{0} — Event {1} (Round {2}, Heat {3}){4}",
-                        doc.EventName, doc.EventNumber, doc.RoundNumber, doc.HeatNumber, cropTag);
-                    g.DrawString(title, titleFont, whiteBrush, 20f, 12f);
-
-                    string meta = string.Format(CultureInfo.InvariantCulture,
-                        "{0}   |   Wind: {1}   |   Camera: {2} ({3} Hz)   |   Zoom {4}x ({5} DPI)   |   Gun: {6:HH:mm:ss.ffff}",
-                        doc.CompetitionName, doc.GetWindFormatted(), cam.DisplayName, cam.SampleRateHz, zoom, printCfg.Dpi, doc.GunTimeOfDay);
-                    g.DrawString(meta, subFont, mutedBrush, 20f, 42f);
-                }
-
-                // 2. Time Ruler Bar
-                Rectangle rulerRect = new Rectangle(stripLeft, headerH, stripDrawW, rulerH);
-                using (SolidBrush rb = new SolidBrush(Color.FromArgb(30, 41, 59)))
-                {
-                    g.FillRectangle(rb, 0, headerH, outW, rulerH);
-                }
-
-                // 3. Draw Cropped / Selected Strip Image
-                Rectangle stripRect = new Rectangle(stripLeft, headerH + rulerH, stripDrawW, stripH);
+                // 2. Draw Centered Cropped / Selected Strip Image
+                Rectangle stripRect = new Rectangle(stripLeft, stripTop, stripDrawW, stripH);
                 InterpolationMode prevInterp = g.InterpolationMode;
                 g.InterpolationMode = printCfg.Smooth ? InterpolationMode.HighQualityBicubic : InterpolationMode.NearestNeighbor;
                 g.PixelOffsetMode = PixelOffsetMode.Half;
@@ -2017,29 +2055,52 @@ namespace OptiFinish.Core
                 g.InterpolationMode = prevInterp;
                 g.PixelOffsetMode = PixelOffsetMode.Default;
 
-                // Optional Lane Gutter Bar (honors vertical crop vTop..vBot!)
+                // 3. Left & Right Gray Lane Bars + Lane Boundary Lines (honors vertical crop vTop..vBot & ReverseLaneOrder)
+                float[] calibBounds = cam.CalibratedLaneBoundaries ?? doc.CalibratedLaneBoundaries;
+                bool hasCalib = (calibBounds != null && calibBounds.Length >= 2);
+                int numLanes = hasCalib ? (calibBounds.Length - 1) : Math.Max(1, doc.LaneCount);
                 if (printCfg.LaneBarsOn)
                 {
-                    using (SolidBrush gutterBrush = new SolidBrush(Color.FromArgb(230, 15, 23, 42)))
+                    Rectangle leftBar = new Rectangle(stripRect.Left - barW, stripRect.Top, barW, stripRect.Height);
+                    Rectangle rightBar = new Rectangle(stripRect.Right, stripRect.Top, barW, stripRect.Height);
+                    using (SolidBrush barBrush = new SolidBrush(Color.FromArgb(204, 204, 204)))
+                    using (Font laneFont = new Font("Segoe UI", 10.5f, FontStyle.Regular))
+                    using (StringFormat sfCenter = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
                     {
-                        g.FillRectangle(gutterBrush, 0, headerH + rulerH, stripLeft, stripH);
-                    }
+                        g.FillRectangle(barBrush, leftBar);
+                        g.FillRectangle(barBrush, rightBar);
 
-                    using (Font laneFont = new Font("Segoe UI", 9f, FontStyle.Bold))
-                    using (SolidBrush laneText = new SolidBrush(Color.FromArgb(241, 245, 249)))
-                    using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                    {
-                        for (int ln = 1; ln <= doc.LaneCount; ln++)
+                        for (int ln = 1; ln <= numLanes; ln++)
                         {
-                            float centerRatio = doc.LaneToCenterRatio(ln);
-                            if (centerRatio < vTop || centerRatio > vBot) continue;
-                            float ly = stripRect.Top + ((centerRatio - vTop) / Math.Max(0.01f, vBot - vTop)) * stripRect.Height;
-                            g.DrawString("L" + ln, laneFont, laneText, new RectangleF(0, ly - 10f, stripLeft, 20f), sf);
+                            int dispLane = cam.ReverseLaneOrder ? (numLanes - ln + 1) : ln;
+                            float r0 = hasCalib
+                                ? calibBounds[ln - 1]
+                                : (doc.LaneTopRatio + (doc.LaneBottomRatio - doc.LaneTopRatio) * ((float)(ln - 1) / Math.Max(1, numLanes)));
+                            float r1 = hasCalib
+                                ? calibBounds[ln]
+                                : (doc.LaneTopRatio + (doc.LaneBottomRatio - doc.LaneTopRatio) * ((float)ln / Math.Max(1, numLanes)));
+                            if (r1 < vTop || r0 > vBot) continue;
+
+                            float clampedR0 = Math.Max(vTop, r0);
+                            float clampedR1 = Math.Min(vBot, r1);
+                            float y0 = stripRect.Top + ((clampedR0 - vTop) / Math.Max(0.01f, vBot - vTop)) * stripRect.Height;
+                            float y1 = stripRect.Top + ((clampedR1 - vTop) / Math.Max(0.01f, vBot - vTop)) * stripRect.Height;
+                            string laneStr = dispLane.ToString(CultureInfo.InvariantCulture);
+
+                            g.DrawString(laneStr, laneFont, Brushes.Black,
+                                new RectangleF(leftBar.Left, y0, leftBar.Width, Math.Max(14f, y1 - y0)), sfCenter);
+                            g.DrawString(laneStr, laneFont, Brushes.Black,
+                                new RectangleF(rightBar.Left, y0, rightBar.Width, Math.Max(14f, y1 - y0)), sfCenter);
+
+                            if (ln < numLanes && r1 > vTop && r1 < vBot)
+                            {
+                                g.DrawLine(Pens.Black, leftBar.Left, y1, rightBar.Right, y1);
+                            }
                         }
                     }
                 }
 
-                // Time Ruler Ticks calibrated strictly to cropped column range [sCol..eCol]
+                // Top & Bottom Black Time Ticks + Labels calibrated strictly to [sCol..eCol]
                 double spanSec = Math.Max(0.001, tMax - tMin);
                 double stepSec = spanSec <= 0.15 ? 0.01
                                : spanSec <= 0.45 ? 0.02
@@ -2048,25 +2109,49 @@ namespace OptiFinish.Core
                                : spanSec <= 8.00 ? 0.25 : 0.50;
                 double firstTick = Math.Ceiling(tMin / stepSec) * stepSec;
 
-                using (Pen tickPen = new Pen(Color.FromArgb(148, 163, 184), 1f))
-                using (Font tickFont = new Font("Consolas", 8.5f, FontStyle.Bold))
-                using (SolidBrush tickBrush = new SolidBrush(Color.White))
+                using (Pen tickPen = new Pen(Color.Black, 1.4f))
+                using (Font tickFont = new Font("Segoe UI", 9f, FontStyle.Regular))
                 {
+                    float zeroPx = -9999f;
+                    if (tMin <= 0.0 && tMax >= 0.0)
+                    {
+                        double zeroCol = cam.TimeSecondsToColumn(0.0);
+                        zeroPx = stripRect.Left + (float)(((zeroCol - sCol) / Math.Max(1.0, eCol - sCol)) * stripRect.Width);
+                        if (zeroPx >= stripRect.Left && zeroPx <= stripRect.Right)
+                        {
+                            g.DrawLine(tickPen, zeroPx, stripRect.Top - 7, zeroPx, stripRect.Top);
+                            g.DrawLine(tickPen, zeroPx, stripRect.Bottom, zeroPx, stripRect.Bottom + 7);
+                            g.DrawString("0.00", tickFont, Brushes.Black, zeroPx - 14f, stripRect.Bottom + 9f);
+                        }
+                    }
+
                     float lastLabelPx = -9999f;
                     for (double t = firstTick; t <= tMax + stepSec * 0.25; t += stepSec)
                     {
                         double col = cam.TimeSecondsToColumn(t);
                         float px = stripRect.Left + (float)(((col - sCol) / Math.Max(1.0, eCol - sCol)) * stripRect.Width);
                         if (px < stripRect.Left || px > stripRect.Right) continue;
-                        if (Math.Abs(px - lastLabelPx) < 52f) continue;
-                        g.DrawLine(tickPen, px, rulerRect.Bottom - 8, px, rulerRect.Bottom);
-                        string lbl = stepSec < 0.05 ? t.ToString("0.000", CultureInfo.InvariantCulture) + "s" : t.ToString("0.00", CultureInfo.InvariantCulture) + "s";
-                        g.DrawString(lbl, tickFont, tickBrush, px - 18f, rulerRect.Top + 4f);
-                        lastLabelPx = px;
+                        if (zeroPx > -9000f && Math.Abs(px - zeroPx) < 6f) continue;
+
+                        if (stepSec >= 0.02 || Math.Abs((long)Math.Round(t * 100.0)) % 2 == 0)
+                        {
+                            g.DrawLine(tickPen, px, stripRect.Top - 7, px, stripRect.Top);
+                            g.DrawLine(tickPen, px, stripRect.Bottom, px, stripRect.Bottom + 7);
+                        }
+
+                        if (zeroPx > -9000f && Math.Abs(px - zeroPx) < 52f) continue;
+                        if (Math.Abs(px - lastLabelPx) < 64f) continue;
+
+                        if (Math.Abs(t) >= 0.005)
+                        {
+                            string lbl = stepSec < 0.05 ? t.ToString("0.00", CultureInfo.InvariantCulture) : t.ToString("0.00", CultureInfo.InvariantCulture);
+                            g.DrawString(lbl, tickFont, Brushes.Black, px - 14f, stripRect.Bottom + 9f);
+                            lastLabelPx = px;
+                        }
                     }
                 }
 
-                // 4. Draw Evaluated Competitor Hash Lines & Labels inside the cropped range
+                // 4. Draw Evaluated Competitor Hash Lines & Labels (skip for Zero Control Lane=0 rows so gun flash remains clean)
                 using (Pen evalLinePen = new Pen(Color.FromArgb(230, 239, 68, 68), Math.Max(1.2f, LynxExtendedConfig.Instance.HashWidth)))
                 using (Font tagFont = new Font("Segoe UI", 8.5f, FontStyle.Bold))
                 {
@@ -2074,6 +2159,7 @@ namespace OptiFinish.Core
                     {
                         CompetitorEntry c = doc.Competitors[i];
                         if (!c.HasValidNumericTime) continue;
+                        if (c.Lane == 0 && string.IsNullOrEmpty(c.LastName)) continue;
 
                         double col = cam.TimeSecondsToColumn(c.RawTimeSeconds);
                         if (col < sCol || col > eCol) continue;
@@ -2127,46 +2213,92 @@ namespace OptiFinish.Core
                     }
                 }
 
-                // 5. Optional Official Results Summary Table at Bottom (honors PrintResultsOn, MaxResults, ResultsRange)
+                // 5. Bottom Results Table (FinishLynx printout style matching afsaf.pdf)
                 if (printCfg.PrintResultsOn)
                 {
-                    int tableTop = headerH + rulerH + stripH + 12;
-                    using (Font hdrFont = new Font("Segoe UI", 9f, FontStyle.Bold))
-                    using (Font rowFont = new Font("Segoe UI", 9f, FontStyle.Regular))
-                    using (SolidBrush hdrBg = new SolidBrush(Color.FromArgb(226, 232, 240)))
-                    using (SolidBrush textDark = new SolidBrush(Color.FromArgb(15, 23, 42)))
-                    using (Pen rowLine = new Pen(Color.FromArgb(226, 232, 240), 1f))
+                    int tableTop = Math.Max(stripRect.Bottom + 44, outH - footerH - tableH - 12);
+                    double tw = outW - 40.0;
+                    float[] colX = new float[]
                     {
-                        g.FillRectangle(hdrBg, 20, tableTop, outW - 40, 26);
-                        int[] colX = new int[] { 28, 90, 150, 230, 420, 650, 790, 910, 1030 };
-                        string[] headers = new string[] { "Place", "Lane", "Bib", "Athlete", "Affiliation", "Official Time", "Delta", "ReacTime", "Speed" };
+                        20f,
+                        (float)(20.0 + tw * 0.060),
+                        (float)(20.0 + tw * 0.122),
+                        (float)(20.0 + tw * 0.160),
+                        (float)(20.0 + tw * 0.298),
+                        (float)(20.0 + tw * 0.545),
+                        (float)(20.0 + tw * 0.775),
+                        (float)(20.0 + tw * 0.892)
+                    };
+                    float[] colW = new float[]
+                    {
+                        (float)(tw * 0.052),
+                        (float)(tw * 0.054),
+                        (float)(tw * 0.030),
+                        (float)(tw * 0.130),
+                        (float)(tw * 0.238),
+                        (float)(tw * 0.220),
+                        (float)(tw * 0.108),
+                        (float)(tw * 0.108)
+                    };
+                    string[] headers = new string[] { "Status", "Id", "Or", "First Name", "Last Name", "Affiliation", "<N/A>", "<N/A>" };
+
+                    using (Font hdrFont = new Font("Segoe UI", 10.5f, FontStyle.Bold))
+                    using (Font rowFont = new Font("Segoe UI", 10f, FontStyle.Regular))
+                    using (Pen rulePen = new Pen(Color.Black, 1.4f))
+                    using (Pen segPen = new Pen(Color.Black, 1f))
+                    using (StringFormat leftFmt = new StringFormat { Alignment = StringAlignment.Near, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap })
+                    using (StringFormat rightFmt = new StringFormat { Alignment = StringAlignment.Far, FormatFlags = StringFormatFlags.NoWrap })
+                    {
                         for (int c = 0; c < headers.Length; c++)
                         {
-                            g.DrawString(headers[c], hdrFont, textDark, colX[c], tableTop + 5);
+                            StringFormat fmt = (c >= 6) ? rightFmt : leftFmt;
+                            g.DrawString(headers[c], hdrFont, Brushes.Black, new RectangleF(colX[c], tableTop, colW[c], 24f), fmt);
                         }
+                        g.DrawLine(rulePen, 20f, tableTop + 26f, outW - 20f, tableTop + 26f);
 
-                        int ry = tableTop + 28;
+                        int ry = tableTop + 32;
                         for (int r = 0; r < printableRows.Count; r++)
                         {
                             CompetitorEntry comp = printableRows[r];
-                            string fullName = (comp.LastName + ", " + comp.FirstName).Trim(' ', ',');
-                            string reac = !double.IsNaN(comp.ReactionTimeSeconds) && comp.ReactionTimeSeconds > 0
-                                ? comp.ReactionTimeSeconds.ToString("0.000", CultureInfo.InvariantCulture) + "s" : "";
+                            TimePrecision effPrec = comp.PrecisionOverride ?? doc.Precision;
+                            string timeText = comp.GetFormattedOfficialTime(effPrec);
+                            string deltaText = doc.FormatDeltaForCompetitor(comp, doc.DeltaMode);
+                            if (string.IsNullOrEmpty(deltaText) && comp.HasValidNumericTime)
+                            {
+                                deltaText = CompetitorEntry.FormatSeconds(comp.RawTimeSeconds, effPrec);
+                            }
 
-                            g.DrawString(comp.GetPlaceDisplay(), hdrFont, textDark, colX[0], ry + 4);
-                            g.DrawString(comp.Lane > 0 ? comp.Lane.ToString(CultureInfo.InvariantCulture) : "-", rowFont, textDark, colX[1], ry + 4);
-                            g.DrawString(comp.BibId, rowFont, textDark, colX[2], ry + 4);
-                            g.DrawString(fullName, hdrFont, textDark, colX[3], ry + 4);
-                            g.DrawString(comp.Affiliation, rowFont, textDark, colX[4], ry + 4);
-                            g.DrawString(comp.GetFormattedOfficialTime(doc.Precision), hdrFont, textDark, colX[5], ry + 4);
-                            g.DrawString(doc.FormatDeltaForCompetitor(comp), rowFont, textDark, colX[6], ry + 4);
-                            g.DrawString(reac, rowFont, textDark, colX[7], ry + 4);
-                            g.DrawString(comp.GetFormattedSpeed(doc.DistanceMeters, doc.SpeedUnit), rowFont, textDark, colX[8], ry + 4);
+                            string[] cells = new string[]
+                            {
+                                comp.GetPlaceDisplay(),
+                                comp.BibId ?? "",
+                                comp.Lane.ToString(CultureInfo.InvariantCulture),
+                                comp.FirstName ?? "",
+                                comp.LastName ?? "",
+                                comp.Affiliation ?? "",
+                                timeText,
+                                deltaText
+                            };
 
-                            g.DrawLine(rowLine, 20, ry + tableRowH - 1, outW - 20, ry + tableRowH - 1);
+                            for (int c = 0; c < cells.Length; c++)
+                            {
+                                StringFormat fmt = (c >= 6) ? rightFmt : leftFmt;
+                                g.DrawString(cells[c], rowFont, Brushes.Black, new RectangleF(colX[c], ry + 3f, colW[c], tableRowH - 6f), fmt);
+                                g.DrawLine(segPen, colX[c], ry + tableRowH - 2f, colX[c] + colW[c], ry + tableRowH - 2f);
+                            }
                             ry += tableRowH;
                         }
                     }
+                }
+
+                // 6. Official Bottom Footer
+                using (Font footFont = new Font("Segoe UI", 8.5f, FontStyle.Regular))
+                using (StringFormat rightFmt = new StringFormat { Alignment = StringAlignment.Far })
+                {
+                    float footerY = outH - 32f;
+                    g.DrawString("Copyright (c) 1991-2024 Lynx System Developers, Inc.", footFont, Brushes.Black, 20f, footerY);
+                    string sponsor = !string.IsNullOrEmpty(doc.SponsorName) ? doc.SponsorName : "OptiFinish Official Timing";
+                    g.DrawString(sponsor, footFont, Brushes.Black, new RectangleF(outW - 360f, footerY, 340f, 20f), rightFmt);
                 }
             }
             return composite;

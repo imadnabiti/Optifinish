@@ -770,7 +770,7 @@ namespace OptiFinish.Core
 
         public bool HasValidNumericTime
         {
-            get { return Status == CompetitorStatus.Valid && !double.IsNaN(RawTimeSeconds) && RawTimeSeconds > 0.0; }
+            get { return Status == CompetitorStatus.Valid && !double.IsNaN(RawTimeSeconds) && !double.IsInfinity(RawTimeSeconds); }
         }
 
         public CompetitorEntry()
@@ -797,10 +797,12 @@ namespace OptiFinish.Core
         /// </summary>
         public static double ComputeRoundedTime(double rawSeconds, TimePrecision precision)
         {
-            if (double.IsNaN(rawSeconds) || rawSeconds <= 0.0) return double.NaN;
+            if (double.IsNaN(rawSeconds) || double.IsInfinity(rawSeconds)) return double.NaN;
 
-            // Quantize to 0.1 ms (1/10000 s) first to eliminate IEEE-754 floating-point noise
-            long tenThousandths = (long)Math.Round(rawSeconds * 10000.0);
+            // Quantize to 0.1 ms (1/10000 s); preserve FinishLynx ceiling rounding for sub-millisecond & negative Zero-Control deltas
+            long tenThousandths = rawSeconds < 0.0
+                ? (long)Math.Ceiling(rawSeconds * 10000.0 - 1e-9)
+                : (long)Math.Round(rawSeconds * 10000.0);
 
             switch (precision)
             {
@@ -822,43 +824,51 @@ namespace OptiFinish.Core
 
         public static string FormatSeconds(double seconds, TimePrecision precision)
         {
-            if (double.IsNaN(seconds) || seconds <= 0.0) return "";
+            if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return "";
 
             double rounded = ComputeRoundedTime(seconds, precision);
+            if (double.IsNaN(rounded)) return "";
+            if (Math.Abs(rounded) < 1e-9) rounded = 0.0;
+
+            bool isNeg = rounded < 0.0;
+            double absVal = Math.Abs(rounded);
+            string sign = isNeg ? "-" : "";
+
             int decimals = (precision == TimePrecision.Fifths) ? 1 : Math.Max(0, Math.Min(4, (int)precision));
             string secFormat = decimals == 0 ? "0" : ("0." + new string('0', decimals));
             string paddedSecFormat = decimals == 0 ? "00" : ("00." + new string('0', decimals));
 
-            if (rounded >= 3600.0)
+            if (absVal >= 3600.0)
             {
-                int hrs = (int)(rounded / 3600.0);
-                double rem = rounded - (hrs * 3600.0);
+                int hrs = (int)(absVal / 3600.0);
+                double rem = absVal - (hrs * 3600.0);
                 int mins = (int)(rem / 60.0);
                 double secs = rem - (mins * 60.0);
-                return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}:{2}",
-                    hrs, mins, secs.ToString(paddedSecFormat, CultureInfo.InvariantCulture));
+                return string.Format(CultureInfo.InvariantCulture, "{0}{1}:{2:00}:{3}",
+                    sign, hrs, mins, secs.ToString(paddedSecFormat, CultureInfo.InvariantCulture));
             }
-            if (rounded >= 60.0)
+            if (absVal >= 60.0)
             {
-                int mins = (int)(rounded / 60.0);
-                double secs = rounded - (mins * 60.0);
-                return string.Format(CultureInfo.InvariantCulture, "{0}:{1}",
-                    mins, secs.ToString(paddedSecFormat, CultureInfo.InvariantCulture));
+                int mins = (int)(absVal / 60.0);
+                double secs = absVal - (mins * 60.0);
+                return string.Format(CultureInfo.InvariantCulture, "{0}{1}:{2}",
+                    sign, mins, secs.ToString(paddedSecFormat, CultureInfo.InvariantCulture));
             }
-            return rounded.ToString(secFormat, CultureInfo.InvariantCulture);
+            return sign + absVal.ToString(secFormat, CultureInfo.InvariantCulture);
         }
 
         public string GetFormattedOfficialTime(TimePrecision precision)
         {
+            TimePrecision effPrec = PrecisionOverride ?? precision;
             if (Status != CompetitorStatus.Valid)
             {
                 return string.IsNullOrEmpty(CustomTimeText) ? "" : CustomTimeText;
             }
-            if (!string.IsNullOrEmpty(CustomTimeText) && (double.IsNaN(RawTimeSeconds) || RawTimeSeconds <= 0.0))
+            if (!string.IsNullOrEmpty(CustomTimeText) && double.IsNaN(RawTimeSeconds))
             {
                 return CustomTimeText;
             }
-            return FormatSeconds(RawTimeSeconds, precision);
+            return FormatSeconds(RawTimeSeconds, effPrec);
         }
 
         public string GetPlaceDisplay()
@@ -872,7 +882,7 @@ namespace OptiFinish.Core
 
         public string GetFormattedSpeed(double distanceMeters, SpeedMeasurementUnit unit)
         {
-            if (!HasValidNumericTime || distanceMeters <= 0.0) return "";
+            if (!HasValidNumericTime || RawTimeSeconds <= 0.0 || distanceMeters <= 0.0) return "";
             double mps = distanceMeters / RawTimeSeconds;
             switch (unit)
             {
@@ -888,7 +898,7 @@ namespace OptiFinish.Core
 
         public string GetFormattedPace(double distanceMeters)
         {
-            if (!HasValidNumericTime || distanceMeters <= 0.0) return "";
+            if (!HasValidNumericTime || RawTimeSeconds <= 0.0 || distanceMeters <= 0.0) return "";
             double secPerKm = (RawTimeSeconds / distanceMeters) * 1000.0;
             int mins = (int)(secPerKm / 60.0);
             double secs = secPerKm - (mins * 60.0);
@@ -1060,6 +1070,7 @@ namespace OptiFinish.Core
         /// </summary>
         public int RatioToLane(float verticalRatio)
         {
+            bool rev = (Cameras != null && Cameras.Count > 0 && Cameras[0] != null && Cameras[0].ReverseLaneOrder);
             if (CalibratedLaneBoundaries != null && CalibratedLaneBoundaries.Length >= 2)
             {
                 int nLanes = CalibratedLaneBoundaries.Length - 1;
@@ -1067,10 +1078,10 @@ namespace OptiFinish.Core
                 {
                     if (verticalRatio <= CalibratedLaneBoundaries[i + 1])
                     {
-                        return i + 1;
+                        return rev ? (nLanes - i) : (i + 1);
                     }
                 }
-                return nLanes;
+                return rev ? 1 : nLanes;
             }
             if (LaneCount <= 0) return 1;
             float span = LaneBottomRatio - LaneTopRatio;
@@ -1079,7 +1090,7 @@ namespace OptiFinish.Core
             int lane = (int)Math.Floor(rel * LaneCount) + 1;
             if (lane < 1) lane = 1;
             if (lane > LaneCount) lane = LaneCount;
-            return lane;
+            return rev ? (LaneCount - lane + 1) : lane;
         }
 
         /// <summary>
@@ -1088,16 +1099,19 @@ namespace OptiFinish.Core
         /// </summary>
         public float LaneToCenterRatio(int lane)
         {
+            bool rev = (Cameras != null && Cameras.Count > 0 && Cameras[0] != null && Cameras[0].ReverseLaneOrder);
             if (CalibratedLaneBoundaries != null && CalibratedLaneBoundaries.Length >= 2)
             {
                 int nLanes = CalibratedLaneBoundaries.Length - 1;
                 int idx = Math.Max(0, Math.Min(nLanes - 1, lane - 1));
-                return 0.5f * (CalibratedLaneBoundaries[idx] + CalibratedLaneBoundaries[idx + 1]);
+                int bandIdx = rev ? (nLanes - 1 - idx) : idx;
+                return 0.5f * (CalibratedLaneBoundaries[bandIdx] + CalibratedLaneBoundaries[bandIdx + 1]);
             }
             if (LaneCount <= 0) return 0.5f;
             int clamped = Math.Max(1, Math.Min(LaneCount, lane));
+            int effIdx = rev ? (LaneCount - clamped + 1) : clamped;
             float span = LaneBottomRatio - LaneTopRatio;
-            return LaneTopRatio + span * ((clamped - 0.5f) / LaneCount);
+            return LaneTopRatio + span * ((effIdx - 0.5f) / LaneCount);
         }
 
         /// <summary>
@@ -1168,25 +1182,28 @@ namespace OptiFinish.Core
             int idx = ordered.IndexOf(target);
             if (idx < 0) return "";
 
-            double tTarget = CompetitorEntry.ComputeRoundedTime(target.RawTimeSeconds, Precision);
+            TimePrecision effPrec = target.PrecisionOverride ?? Precision;
+            double tTarget = CompetitorEntry.ComputeRoundedTime(target.RawTimeSeconds, effPrec);
             double diff = 0.0;
+            int decimals = (effPrec == TimePrecision.Fifths) ? 1 : Math.Max(0, Math.Min(4, (int)effPrec));
+            string diffFmt = decimals == 0 ? "0" : ("0." + new string('0', decimals));
 
             switch (mode)
             {
                 case DeltaReferenceMode.FromWinner:
-                    if (idx == 0) return CompetitorEntry.FormatSeconds(target.RawTimeSeconds, Precision);
-                    diff = tTarget - CompetitorEntry.ComputeRoundedTime(ordered[0].RawTimeSeconds, Precision);
-                    return "+" + diff.ToString("0.00", CultureInfo.InvariantCulture);
+                    if (idx == 0) return CompetitorEntry.FormatSeconds(target.RawTimeSeconds, effPrec);
+                    diff = tTarget - CompetitorEntry.ComputeRoundedTime(ordered[0].RawTimeSeconds, ordered[0].PrecisionOverride ?? Precision);
+                    return "+" + diff.ToString(diffFmt, CultureInfo.InvariantCulture);
 
                 case DeltaReferenceMode.FromPrevious:
-                    if (idx == 0) return CompetitorEntry.FormatSeconds(target.RawTimeSeconds, Precision);
-                    diff = tTarget - CompetitorEntry.ComputeRoundedTime(ordered[idx - 1].RawTimeSeconds, Precision);
-                    return "+" + diff.ToString("0.00", CultureInfo.InvariantCulture);
+                    if (idx == 0) return CompetitorEntry.FormatSeconds(target.RawTimeSeconds, effPrec);
+                    diff = tTarget - CompetitorEntry.ComputeRoundedTime(ordered[idx - 1].RawTimeSeconds, ordered[idx - 1].PrecisionOverride ?? Precision);
+                    return "+" + diff.ToString(diffFmt, CultureInfo.InvariantCulture);
 
                 case DeltaReferenceMode.FromNext:
-                    if (idx >= ordered.Count - 1) return "0.00";
-                    diff = CompetitorEntry.ComputeRoundedTime(ordered[idx + 1].RawTimeSeconds, Precision) - tTarget;
-                    return "-" + diff.ToString("0.00", CultureInfo.InvariantCulture);
+                    if (idx >= ordered.Count - 1) return (0.0).ToString(diffFmt, CultureInfo.InvariantCulture);
+                    diff = CompetitorEntry.ComputeRoundedTime(ordered[idx + 1].RawTimeSeconds, ordered[idx + 1].PrecisionOverride ?? Precision) - tTarget;
+                    return "-" + diff.ToString(diffFmt, CultureInfo.InvariantCulture);
 
                 case DeltaReferenceMode.LengthsAthletics:
                 case DeltaReferenceMode.LengthsCycling:

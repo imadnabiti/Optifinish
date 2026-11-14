@@ -247,11 +247,53 @@ namespace OptiFinish
                                     fIdx, vCam.VideoFrameTimestamps[fIdx]));
                             }
                         }
+                        if (nativeDoc.Competitors.Count != 1)
+                            throw new InvalidOperationException("Expected 1 competitor in punto zero.evn, got " + nativeDoc.Competitors.Count);
+                        CompetitorEntry pzEntry = nativeDoc.Competitors[0];
+                        string pzTime = pzEntry.GetFormattedOfficialTime(nativeDoc.Precision);
+                        string pzDelta = nativeDoc.FormatDeltaForCompetitor(pzEntry);
+                        string pzSerial = nativeDoc.Cameras.Count > 0 && nativeDoc.Cameras[0].Profile != null ? nativeDoc.Cameras[0].Profile.SerialNumber : "";
+                        report.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                            "          ZeroControl Entry: Place={0}, Lane={1}, Time='{2}', Delta='{3}', Serial='{4}', ReverseLaneOrder={5}",
+                            pzEntry.GetPlaceDisplay(), pzEntry.Lane, pzTime, pzDelta, pzSerial,
+                            nativeDoc.Cameras.Count > 0 && nativeDoc.Cameras[0].ReverseLaneOrder));
+                        if (pzEntry.Lane != 0 || pzTime != "-0.0003" || pzDelta != "-0.0003" || pzSerial != "70676")
+                        {
+                            throw new InvalidOperationException(string.Format(CultureInfo.InvariantCulture,
+                                "Zero Control assertion failed: Lane={0}, Time='{1}', Delta='{2}', Serial='{3}'",
+                                pzEntry.Lane, pzTime, pzDelta, pzSerial));
+                        }
+
                         string pzStripPng = Path.Combine(sampleDir, "Native_PuntoZero_PhotoFinish.png");
                         using (Bitmap nativeBmp = SlitScanEngine.RenderAnnotatedExportBitmap(nativeDoc, 0))
                         {
                             nativeBmp.Save(pzStripPng, ImageFormat.Png);
                             report.AppendLine("          Exported Photo-Finish -> " + Path.GetFileName(pzStripPng));
+                        }
+
+                        CropWindow pzCrop = new CropWindow(184, 460, 0f, 1f);
+                        PrintDialogSettings pzPrintCfg = new PrintDialogSettings
+                        {
+                            Zoom = 2,
+                            Smooth = true,
+                            Dpi = 600,
+                            LaneBarsOn = true,
+                            PrintResultsOn = true,
+                            MaxResults = 20,
+                            ResultsRange = "1-20"
+                        };
+                        string pzCropPng = Path.Combine(sampleDir, "PuntoZero_Cropped.png");
+                        string pzCropPdf = Path.Combine(sampleDir, "PuntoZero_Cropped.pdf");
+                        using (Bitmap pzBmp = SlitScanEngine.RenderAnnotatedExportBitmap(nativeDoc, 0, pzCrop, pzPrintCfg))
+                        {
+                            SlitScanEngine.SaveBitmapToFile(pzBmp, pzCropPng, 92);
+                            SlitScanEngine.SaveBitmapToFile(pzBmp, pzCropPdf, 92);
+                            byte[] pzPdfBytes = File.ReadAllBytes(pzCropPdf);
+                            bool pzValidPdf = pzPdfBytes.Length > 100 && pzPdfBytes[0] == (byte)'%' && pzPdfBytes[1] == (byte)'P' && pzPdfBytes[2] == (byte)'D' && pzPdfBytes[3] == (byte)'F';
+                            report.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                                "          Exported Cropped Zero Control -> {0}, {1} ({2}x{3}px, pdf={4}B ValidPdf={5})",
+                                Path.GetFileName(pzCropPng), Path.GetFileName(pzCropPdf),
+                                pzBmp.Width, pzBmp.Height, pzPdfBytes.Length, pzValidPdf));
                         }
                     }
 

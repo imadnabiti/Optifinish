@@ -920,14 +920,15 @@ namespace OptiFinish
                 SlitScanEngine.UpdateDisplayBitmap(doc.Cameras[0]);
                 if (hasCam2) SlitScanEngine.UpdateDisplayBitmap(doc.Cameras[1]);
 
-                double firstTime = 0.0;
+                double firstTime = double.NaN;
                 for (int i = 0; i < doc.Competitors.Count; i++)
                 {
                     if (doc.Competitors[i].HasValidNumericTime) { firstTime = doc.Competitors[i].RawTimeSeconds; break; }
                 }
-                if (firstTime <= 0.0) firstTime = doc.Cameras[0].CaptureStartSeconds + 0.2;
+                if (double.IsNaN(firstTime)) firstTime = doc.Cameras[0].CaptureStartSeconds + 0.05;
                 _vp1.CenterOnTime(firstTime);
                 if (hasCam2) _vp2.CenterOnTime(firstTime);
+                if (_txtFinishTime[0] != null) _txtFinishTime[0].Text = CompetitorEntry.FormatSeconds(firstTime, doc.Precision);
             }
 
             RefreshAll();
@@ -1090,7 +1091,7 @@ namespace OptiFinish
         {
             if (key == "Place") return c.GetPlaceDisplay();
             if (key == "Id") return c.BibId ?? "";
-            if (key == "Lane") return c.Lane > 0 ? c.Lane.ToString(CultureInfo.InvariantCulture) : "";
+            if (key == "Lane") return (c.Lane > 0 || c.HasValidNumericTime) ? c.Lane.ToString(CultureInfo.InvariantCulture) : "";
             if (key == "FirstName") return c.FirstName ?? "";
             if (key == "LastName") return c.LastName ?? "";
             if (key == "Affiliation") return c.Affiliation ?? "";
@@ -1231,20 +1232,57 @@ namespace OptiFinish
         private void OnViewportQuickEvaluate(object sender, HairlineChangedEventArgs e)
         {
             if (_doc == null) return;
-            int lane = e.Lane;
+            bool isZeroCtrl = (e.Lane == 0)
+                || Math.Abs(e.TimeSeconds) < 0.25
+                || (_doc.EventName != null && _doc.EventName.IndexOf("zero", StringComparison.OrdinalIgnoreCase) >= 0);
+            int lane = isZeroCtrl ? 0 : e.Lane;
             CompetitorEntry target = null;
-            for (int i = 0; i < _doc.Competitors.Count; i++)
+            if (isZeroCtrl)
             {
-                if (_doc.Competitors[i].Lane == lane) { target = _doc.Competitors[i]; break; }
+                for (int i = 0; i < _doc.Competitors.Count; i++)
+                {
+                    if (_doc.Competitors[i].Lane == 0 && string.IsNullOrEmpty(_doc.Competitors[i].LastName))
+                    {
+                        target = _doc.Competitors[i];
+                        break;
+                    }
+                }
+                if (target == null && _dgvResults.SelectedRows.Count > 0)
+                {
+                    target = _dgvResults.SelectedRows[0].Tag as CompetitorEntry;
+                }
+                if (target == null)
+                {
+                    target = new CompetitorEntry
+                    {
+                        Place = 1,
+                        Lane = 0,
+                        BibId = "",
+                        FirstName = "",
+                        LastName = "",
+                        Affiliation = "",
+                        PrecisionOverride = TimePrecision.TenThousandths
+                    };
+                    _doc.Competitors.Add(target);
+                }
+                target.PrecisionOverride = TimePrecision.TenThousandths;
+                _doc.Precision = TimePrecision.TenThousandths;
             }
-            if (target == null && _dgvResults.SelectedRows.Count > 0)
+            else
             {
-                target = _dgvResults.SelectedRows[0].Tag as CompetitorEntry;
-            }
-            if (target == null)
-            {
-                target = new CompetitorEntry { Lane = lane, BibId = (100 + lane).ToString(CultureInfo.InvariantCulture), LastName = "Lane " + lane };
-                _doc.Competitors.Add(target);
+                for (int i = 0; i < _doc.Competitors.Count; i++)
+                {
+                    if (_doc.Competitors[i].Lane == lane) { target = _doc.Competitors[i]; break; }
+                }
+                if (target == null && _dgvResults.SelectedRows.Count > 0)
+                {
+                    target = _dgvResults.SelectedRows[0].Tag as CompetitorEntry;
+                }
+                if (target == null)
+                {
+                    target = new CompetitorEntry { Lane = lane, BibId = (100 + lane).ToString(CultureInfo.InvariantCulture), LastName = "Lane " + lane };
+                    _doc.Competitors.Add(target);
+                }
             }
 
             target.RawTimeSeconds = e.TimeSeconds;
@@ -1278,23 +1316,74 @@ namespace OptiFinish
             if (cam == null) return;
 
             string keyVal = _txtEvalId[camIdx].Text.Trim();
+            bool isZeroCtrl = (keyVal == "0")
+                || Math.Abs(vp.CursorTimeSeconds) < 0.25
+                || (_doc.EventName != null && _doc.EventName.IndexOf("zero", StringComparison.OrdinalIgnoreCase) >= 0);
+
             CompetitorEntry target = null;
-            for (int i = 0; i < _doc.Competitors.Count; i++)
+            if (isZeroCtrl)
             {
-                CompetitorEntry c = _doc.Competitors[i];
-                if (cam.IdentifyBy == ResultIdentifyMethod.Id && string.Equals(c.BibId, keyVal, StringComparison.OrdinalIgnoreCase)) { target = c; break; }
-                if (cam.IdentifyBy == ResultIdentifyMethod.License && string.Equals(c.License, keyVal, StringComparison.OrdinalIgnoreCase)) { target = c; break; }
-                if (cam.IdentifyBy == ResultIdentifyMethod.Lane)
+                for (int i = 0; i < _doc.Competitors.Count; i++)
                 {
-                    int ln;
-                    if (int.TryParse(keyVal, out ln) && c.Lane == ln) { target = c; break; }
+                    if (_doc.Competitors[i].Lane == 0 && string.IsNullOrEmpty(_doc.Competitors[i].LastName))
+                    {
+                        target = _doc.Competitors[i];
+                        break;
+                    }
+                }
+                if (target == null && _dgvResults.SelectedRows.Count > 0)
+                {
+                    target = _dgvResults.SelectedRows[0].Tag as CompetitorEntry;
+                }
+                if (target == null)
+                {
+                    target = new CompetitorEntry
+                    {
+                        Place = 1,
+                        Lane = 0,
+                        BibId = "",
+                        FirstName = "",
+                        LastName = "",
+                        Affiliation = "",
+                        PrecisionOverride = TimePrecision.TenThousandths
+                    };
+                    _doc.Competitors.Add(target);
+                }
+                target.PrecisionOverride = TimePrecision.TenThousandths;
+                _doc.Precision = TimePrecision.TenThousandths;
+            }
+            else
+            {
+                for (int i = 0; i < _doc.Competitors.Count; i++)
+                {
+                    CompetitorEntry c = _doc.Competitors[i];
+                    if (cam.IdentifyBy == ResultIdentifyMethod.Id && string.Equals(c.BibId, keyVal, StringComparison.OrdinalIgnoreCase)) { target = c; break; }
+                    if (cam.IdentifyBy == ResultIdentifyMethod.License && string.Equals(c.License, keyVal, StringComparison.OrdinalIgnoreCase)) { target = c; break; }
+                    if (cam.IdentifyBy == ResultIdentifyMethod.Lane)
+                    {
+                        int ln;
+                        if (int.TryParse(keyVal, out ln) && c.Lane == ln) { target = c; break; }
+                    }
+                }
+                if (target == null && _dgvResults.SelectedRows.Count > 0)
+                {
+                    target = _dgvResults.SelectedRows[0].Tag as CompetitorEntry;
+                }
+                if (target == null)
+                {
+                    int ln = _doc.RatioToLane(vp.CursorVerticalRatio);
+                    int parsedLn;
+                    if (cam.IdentifyBy == ResultIdentifyMethod.Lane && int.TryParse(keyVal, out parsedLn)) ln = parsedLn;
+                    target = new CompetitorEntry
+                    {
+                        Lane = ln,
+                        BibId = cam.IdentifyBy == ResultIdentifyMethod.Id ? keyVal : (100 + ln).ToString(CultureInfo.InvariantCulture),
+                        License = cam.IdentifyBy == ResultIdentifyMethod.License ? keyVal : "",
+                        LastName = "Lane " + ln
+                    };
+                    _doc.Competitors.Add(target);
                 }
             }
-            if (target == null && _dgvResults.SelectedRows.Count > 0)
-            {
-                target = _dgvResults.SelectedRows[0].Tag as CompetitorEntry;
-            }
-            if (target == null) return;
 
             target.RawTimeSeconds = vp.CursorTimeSeconds;
             target.EvaluatedTimeSeconds = vp.CursorTimeSeconds;
@@ -1357,7 +1446,7 @@ namespace OptiFinish
             else if (colKey == "Time")
             {
                 double t = MeetDatabaseService.ParseFormattedTime(val);
-                if (!double.IsNaN(t) && t > 0) { c.RawTimeSeconds = t; c.Status = CompetitorStatus.Valid; c.IsManualTime = true; }
+                if (!double.IsNaN(t)) { c.RawTimeSeconds = t; c.Status = CompetitorStatus.Valid; c.IsManualTime = true; }
                 else if (string.IsNullOrEmpty(val)) { c.RawTimeSeconds = double.NaN; }
             }
             SafeDefer(delegate
@@ -1439,7 +1528,7 @@ namespace OptiFinish
             m.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem pMenu = new ToolStripMenuItem("Row Precision");
             pMenu.DropDownItems.Add("Use Event Default", null, delegate { c.PrecisionOverride = null; RefreshResultsGrid(); });
-            foreach (TimePrecision tp in new TimePrecision[] { TimePrecision.Tenths, TimePrecision.Hundredths, TimePrecision.Thousandths })
+            foreach (TimePrecision tp in new TimePrecision[] { TimePrecision.Tenths, TimePrecision.Hundredths, TimePrecision.Thousandths, TimePrecision.TenThousandths })
             {
                 TimePrecision cap = tp;
                 AddCheckItem(pMenu.DropDownItems, tp.ToString(), c.PrecisionOverride == tp, delegate { c.PrecisionOverride = cap; RefreshResultsGrid(); });

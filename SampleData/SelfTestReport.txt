@@ -1,5 +1,5 @@
 ﻿=== OptiFinish Studio Clean-Room Verification Report ===
-Timestamp: 2026-11-14 17:49:40
+Timestamp: 2026-11-14 18:20:31
 Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   Place  1 | Lane 6 | Bib #643  | Vaughn, Angela     | Raw=12.8432s | Official(0.01)=12.85 | Official(0.001)=12.844 | Speed=7.79 m/s
   Place  2 | Lane 7 | Bib #391  | Lawson, Tonya      | Raw=12.8818s | Official(0.01)=12.89 | Official(0.001)=12.882 | Speed=7.76 m/s
@@ -10,20 +10,23 @@ Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   Place  7 | Lane 2 | Bib #413  | Lott, Tiffany      | Raw=13.1405s | Official(0.01)=13.15 | Official(0.001)=13.141 | Speed=7.61 m/s
   Place  8 | Lane 1 | Bib #436  | McCray, Yolanda    | Raw=13.2188s | Official(0.01)=13.22 | Official(0.001)=13.219 | Speed=7.56 m/s
 Cropped Direct Export: 441x336px (jpg=42436B, png=27772B, tga=444546B)
-Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): 1100x582px (png=91660B, pdf=145911B ValidPdf=True)
+Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): 1240x1755px (png=94339B, pdf=167684B ValidPdf=True)
 .optr Round-Trip: Cams=2, Competitors=8, Overlays=1, Crop=[180..620, 0.15..0.75], Brightness=12
 
 === Native C:\Lynx .evn + .i01/.i02/.spl Decoder Verification (8 files) ===
-  [1] punto zero.evn -> Event='punto zero' (001-25-01), Competitors=0, Cameras=2, Splits=0
-      Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (1240x1024 px, 5000 Hz, 155 blocks) | Span=54874.7247s..54874.9725s
-      Cam 2: 'Camera 2' | IdentiLynx Video (162 frames, 2048x1536 px @ 20 fps) | Span=54871.3310s..54879.1259s
+  [1] punto zero.evn -> Event='punto zero' (001-25-01), Competitors=1, Cameras=2, Splits=0
+      Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (1240x1024 px, 5000 Hz, 155 blocks) | Span=-0.0619s..0.1859s
+      Cam 2: 'Camera 2' | IdentiLynx Video (162 frames, 2048x1536 px @ 20 fps) | Span=-3.4556s..4.3393s
+      Winner: # ,  (Lane 0) -> Raw=-0.0003s, Official=-0.0003
       >>> punto zero verification:
           Cameras count: 2
           Cam 1: IsVideo=False, Res=1240x1024, Frames=0, Rate=5000 Hz/fps
           Cam 2: IsVideo=True, Res=2048x1536, Frames=162, Rate=20 Hz/fps
           Exported Frame 0 -> Native_PuntoZero_IdentiLynx_Frame0.png (2048x1536 px)
-          Synchronized Hairline Time -0.0003s -> Video Frame 0 (t = 54871.331s)
+          Synchronized Hairline Time -0.0003s -> Video Frame 69 (t = -0.005s)
+          ZeroControl Entry: Place=1, Lane=0, Time='-0.0003', Delta='-0.0003', Serial='70676', ReverseLaneOrder=True
           Exported Photo-Finish -> Native_PuntoZero_PhotoFinish.png
+          Exported Cropped Zero Control -> PuntoZero_Cropped.png, PuntoZero_Cropped.pdf (1240x1755px, pdf=374244B ValidPdf=True)
   [2] Boys3000.evn -> Event='Boys 3000 Meter' (049-35-929), Competitors=18, Cameras=1, Splits=0
       Cam 1: 'Camera 1' | Lynx EtherLynx RGB555 RLE (1224x500 px, 800 Hz, 20 blocks) | Span=527.4924s..566.0576s
       Winner: #1507 Torres, Enrique (Lane 1) -> Raw=527.5690s, Official=8:47.57
@@ -37,17 +40,17 @@ Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3):
       Winner: #25 El Guerrouj, Hicham (Lane 14) -> Raw=229.9176s, Official=3:49.92
   [5] 1500 Meter Run Intermediate Boys (454-1-1).evn -> Event='1500 Meter Run Intermediate Boys' (454-1-01), Competitors=9, Cameras=1, Splits=0
       Cam 1: 'Primary' | Lynx EtherLynx 24-bit 8xBlock (6142x1360 px, 2000 Hz, 223 blocks) | Span=255.2326s..305.6326s
-      Winner: #1560 Roller, Lance (Lane 6) -> Raw=255.3306s, Official=4:15.34
+      Winner: #1560 Roller, Lance (Lane 6) -> Raw=255.3306s, Official=4:15.3306
   [6] Men 110 Meter Hurdles (15-3-2).evn -> Event='Men 110 Meter Hurdles' (015-3-02), Competitors=8, Cameras=1, Splits=0
       Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (1946x1360 px, 3000 Hz, 118 blocks) | Span=13.0419s..16.8379s
-      Winner: #1130 Trammell, Terrence (Lane 5) -> Raw=13.1326s, Official=13.14
+      Winner: #1130 Trammell, Terrence (Lane 5) -> Raw=13.1326s, Official=13.1326
   [7] Men 200 Meter Dash (3-4-1).evn -> Event='Men 200 Meter Dash' (003-4-01), Competitors=8, Cameras=1, Splits=0
       Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (4987x2000 px, 4500 Hz, 502 blocks) | Span=19.8553s..21.0684s
-      Winner: #228 Crawford, Shawn (Lane 5) -> Raw=19.9811s, Official=19.99
+      Winner: #228 Crawford, Shawn (Lane 5) -> Raw=19.9811s, Official=19.9811
   [8] Girls 1500 Meter Run (1-1-1).evn -> Event='Girls 1500 Meter Run' (001-1-01), Competitors=11, Cameras=2, Splits=0
       Cam 1: 'PRO' | Lynx EtherLynx 24-bit 8xBlock (15186x1100 px, 2000 Hz, 882 blocks) | Span=58.2913s..390.9763s
       Cam 2: 'Camera 3' | IdentiLynx Video (276 frames, 640x512 px @ 1 fps) | Span=57.3419s..308.2684s
-      Winner: #337 Kim, Eunyeong (Lane 1) -> Raw=283.3998s, Official=4:43.40
+      Winner: #337 Kim, Eunyeong (Lane 1) -> Raw=283.3998s, Official=4:43.3998
 
 === LynxConfigService & Path Management Verification ===
   DataInDir (Database .evt/.ppl): C:\Lynx

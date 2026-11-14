@@ -241,7 +241,7 @@ namespace OptiFinish.Core
                     if (parts.Length > 6 && !string.IsNullOrEmpty(parts[6].Trim()))
                     {
                         double tSec = ParseFormattedTime(parts[6].Trim());
-                        if (!double.IsNaN(tSec) && tSec > 0)
+                        if (!double.IsNaN(tSec))
                         {
                             c.RawTimeSeconds = tSec;
                             c.HasImageEvaluation = true;
@@ -308,6 +308,29 @@ namespace OptiFinish.Core
             public int SensorHeight;
             public int SampleRateHz;
             public float[] CalibratedLaneBoundaries;
+            public string SerialNumber;
+            public bool ReverseLaneOrder;
+            public string PositionLabel;
+        }
+
+        private static bool IsStartToken(string val)
+        {
+            if (string.IsNullOrEmpty(val)) return false;
+            return string.Equals(val, "Start", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Partenza", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Départ", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Salida", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Startzeit", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsResultsToken(string val)
+        {
+            if (string.IsNullOrEmpty(val)) return false;
+            return string.Equals(val, "Results", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Risultati", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Résultats", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Resultados", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(val, "Ergebnisse", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -506,22 +529,33 @@ namespace OptiFinish.Core
                     doc.EventName = Path.GetFileNameWithoutExtension(evnFilePath);
                 }
             }
+            if (string.IsNullOrEmpty(doc.CompetitionName))
+            {
+                doc.CompetitionName = "Athletics Championship";
+            }
             doc.DistanceMeters = InferDistanceFromEventName(doc.EventName);
             doc.HasWindReading = false;
 
-            // 4. Locate 'Start' string and Gun Start TTime
+            // 4. Locate 'Start' / 'Partenza' string and Gun Start TTime
             int startStringIdx = -1;
+            int firstResultsStringIdx = -1;
             int lastResultsStringIdx = -1;
+            string defaultPositionLabel = "";
             for (int i = 0; i < strings.Count; i++)
             {
-                if (startStringIdx < 0 && string.Equals(strings[i].Value, "Start", StringComparison.OrdinalIgnoreCase))
+                if (startStringIdx < 0 && IsStartToken(strings[i].Value))
                 {
                     startStringIdx = i;
                 }
-                if (string.Equals(strings[i].Value, "Results", StringComparison.OrdinalIgnoreCase))
+                if (IsResultsToken(strings[i].Value))
                 {
+                    if (firstResultsStringIdx < 0) firstResultsStringIdx = i;
                     lastResultsStringIdx = i;
                 }
+            }
+            if (firstResultsStringIdx > 0 && !string.IsNullOrEmpty(strings[firstResultsStringIdx - 1].Value))
+            {
+                defaultPositionLabel = strings[firstResultsStringIdx - 1].Value.Trim();
             }
 
             ulong gunStartMasterTicks = 0;
@@ -591,6 +625,18 @@ namespace OptiFinish.Core
                                     cd.CalibratedLaneBoundaries = bounds;
                                 }
                             }
+                            if (numLanes >= 0 && numLanes <= 20)
+                            {
+                                int endTbl = pos + 16 + (numLanes + 1) * 4;
+                                if (endTbl + 13 <= strings[i].Offset && data[endTbl + 8] == 0x01)
+                                {
+                                    int sNum = BitConverter.ToInt32(data, endTbl + 9);
+                                    if (sNum > 0)
+                                    {
+                                        cd.SerialNumber = sNum.ToString(CultureInfo.InvariantCulture);
+                                    }
+                                }
+                            }
                             break;
                         }
                     }
@@ -627,6 +673,17 @@ namespace OptiFinish.Core
                         {
                             cd.CameraName = strings[s].Value;
                             cd.HeaderOffset = strings[s].Offset;
+                            break;
+                        }
+                    }
+
+                    // Scan for 11 00 02 00 camera display/orientation block (laneOrderFlag at +36)
+                    for (int pos = cd.HeaderOffset; pos + 40 <= strings[i].Offset; pos++)
+                    {
+                        if (data[pos] == 0x11 && data[pos + 1] == 0x00 && data[pos + 2] == 0x02 && data[pos + 3] == 0x00)
+                        {
+                            int laneOrderFlag = BitConverter.ToInt32(data, pos + 36);
+                            cd.ReverseLaneOrder = (laneOrderFlag == 0);
                             break;
                         }
                     }
@@ -705,13 +762,25 @@ namespace OptiFinish.Core
                         Status = CompetitorStatus.Valid
                     };
 
-                    if (compTimes.Count > 0 && compTimes[0].MasterTicks > gunStartMasterTicks)
+                    if (compTimes.Count > 0 && compTimes[0].MasterTicks > 0 && compTimes[0].Divisor != 0xFFFFFFFFu)
                     {
-                        double rawSec = (compTimes[0].MasterTicks - gunStartMasterTicks) / 80000.0;
+                        double rawSec = ((long)compTimes[0].MasterTicks - (long)gunStartMasterTicks) / 80000.0;
                         comp.RawTimeSeconds = rawSec;
                         comp.EvaluatedTimeSeconds = rawSec;
                         comp.HasImageEvaluation = true;
                         comp.Place = placeCode > 0 && placeCode < 1000 ? placeCode : 0;
+
+                        uint div = compTimes[0].Divisor;
+                        if (div == 1 || div == 8) comp.PrecisionOverride = TimePrecision.TenThousandths;
+                        else if (div == 80) comp.PrecisionOverride = TimePrecision.Thousandths;
+                        else if (div == 800) comp.PrecisionOverride = TimePrecision.Hundredths;
+                        else if (div == 8000) comp.PrecisionOverride = TimePrecision.Tenths;
+                        else if (div == 80000) comp.PrecisionOverride = TimePrecision.Seconds;
+
+                        if (comp.PrecisionOverride == TimePrecision.TenThousandths || Math.Abs(rawSec) < 0.1)
+                        {
+                            doc.Precision = TimePrecision.TenThousandths;
+                        }
                     }
                     else
                     {
@@ -763,7 +832,9 @@ namespace OptiFinish.Core
                 }
                 if (!File.Exists(streamPath)) continue;
 
-                string posLabel = c == 0 ? "Inside" : (c == 1 ? "Outside" : ("Cam " + (c + 1)));
+                string posLabel = !string.IsNullOrEmpty(cd.PositionLabel) ? cd.PositionLabel
+                    : (!string.IsNullOrEmpty(defaultPositionLabel) && c == 0 ? defaultPositionLabel
+                    : (c == 0 ? "Inside" : (c == 1 ? "Outside" : ("Cam " + (c + 1)))));
                 SlitCameraStream stream = SlitScanEngine.LoadNativeLynxImageStream(
                     streamPath,
                     cd.CameraName,
@@ -777,6 +848,11 @@ namespace OptiFinish.Core
                 if (stream != null)
                 {
                     stream.CameraId = cd.StreamExtension;
+                    stream.ReverseLaneOrder = cd.ReverseLaneOrder;
+                    if (!string.IsNullOrEmpty(cd.SerialNumber) && stream.Profile != null)
+                    {
+                        stream.Profile.SerialNumber = cd.SerialNumber;
+                    }
                     doc.Cameras.Add(stream);
                 }
             }
@@ -983,21 +1059,30 @@ namespace OptiFinish.Core
                     cam.BlackLevel, cam.WhiteBalanceRed, cam.WhiteBalanceGreen, cam.WhiteBalanceBlue,
                     cam.EnhanceEnabled ? 1 : 0, cam.ReverseLaneOrder ? 1 : 0);
                 sb.AppendLine();
+
+                if (cam.Profile != null && !string.IsNullOrEmpty(cam.Profile.SerialNumber))
+                {
+                    sb.AppendLine("CAMERA_SN=" + cam.Profile.SerialNumber);
+                }
             }
 
             for (int i = 0; i < doc.Competitors.Count; i++)
             {
                 CompetitorEntry c = doc.Competitors[i];
+                string rawStr = double.IsNaN(c.RawTimeSeconds) ? "NaN" : c.RawTimeSeconds.ToString("0.00000", CultureInfo.InvariantCulture);
+                string evStr = double.IsNaN(c.EvaluatedTimeSeconds) ? "NaN" : c.EvaluatedTimeSeconds.ToString("0.00000", CultureInfo.InvariantCulture);
+                int precOv = c.PrecisionOverride.HasValue ? (int)c.PrecisionOverride.Value : -1;
                 sb.AppendFormat(CultureInfo.InvariantCulture,
-                    "COMPETITOR={0}|{1}|{2}|{3}|{4}|{5:0.00000}|{6:0.0000}|{7}|{8:0.0000}|{9}|{10:0.00000}|{11}",
+                    "COMPETITOR={0}|{1}|{2}|{3}|{4}|{5}|{6:0.0000}|{7}|{8:0.0000}|{9}|{10}|{11}|{12}",
                     c.Lane, c.BibId, c.LastName, c.FirstName, c.Affiliation,
-                    double.IsNaN(c.RawTimeSeconds) ? -1.0 : c.RawTimeSeconds,
+                    rawStr,
                     double.IsNaN(c.ReactionTimeSeconds) ? -1.0 : c.ReactionTimeSeconds,
                     (int)c.Status,
                     c.EvaluatedVerticalRatio,
                     c.HasImageEvaluation ? 1 : 0,
-                    double.IsNaN(c.EvaluatedTimeSeconds) ? -1.0 : c.EvaluatedTimeSeconds,
-                    c.EvaluatedCameraIndex);
+                    evStr,
+                    c.EvaluatedCameraIndex,
+                    precOv);
                 sb.AppendLine();
             }
 
@@ -1137,16 +1222,29 @@ namespace OptiFinish.Core
                         if (parts.Length >= 10) lastCam.ReverseLaneOrder = (parts[9] == "1");
                     }
                 }
+                else if (key == "CAMERA_SN" && lastCam != null)
+                {
+                    if (lastCam.Profile == null) lastCam.Profile = new CameraSettingsProfile();
+                    lastCam.Profile.SerialNumber = val.Trim();
+                }
                 else if (key == "COMPETITOR")
                 {
                     string[] parts = val.Split('|');
                     if (parts.Length >= 9)
                     {
                         int lane = 1, st = 0;
-                        double rawT = -1.0, reac = -1.0;
+                        double rawT = double.NaN, reac = -1.0;
                         float vr = 0.5f;
                         int.TryParse(parts[0], out lane);
-                        double.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out rawT);
+                        if (!string.Equals(parts[5], "NaN", StringComparison.OrdinalIgnoreCase))
+                        {
+                            double parsedRaw;
+                            if (double.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out parsedRaw))
+                            {
+                                bool isLegacySentinel = (Math.Abs(parsedRaw + 1.0) < 1e-5) && (parts.Length < 10 || parts[9] != "1");
+                                if (!isLegacySentinel) rawT = parsedRaw;
+                            }
+                        }
                         double.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out reac);
                         int.TryParse(parts[7], out st);
                         float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out vr);
@@ -1158,19 +1256,21 @@ namespace OptiFinish.Core
                             LastName = parts[2],
                             FirstName = parts[3],
                             Affiliation = parts[4],
-                            RawTimeSeconds = rawT >= 0 ? rawT : double.NaN,
+                            RawTimeSeconds = rawT,
                             ReactionTimeSeconds = reac >= 0 ? reac : double.NaN,
                             Status = Enum.IsDefined(typeof(CompetitorStatus), st) ? (CompetitorStatus)st : CompetitorStatus.Valid,
                             EvaluatedVerticalRatio = vr
                         };
                         if (parts.Length >= 12)
                         {
-                            double evT = -1.0;
+                            double evT = double.NaN;
                             int evCam = 0;
                             c.HasImageEvaluation = (parts[9] == "1");
-                            if (double.TryParse(parts[10], NumberStyles.Float, CultureInfo.InvariantCulture, out evT) && evT >= 0)
+                            if (!string.Equals(parts[10], "NaN", StringComparison.OrdinalIgnoreCase) &&
+                                double.TryParse(parts[10], NumberStyles.Float, CultureInfo.InvariantCulture, out evT))
                             {
-                                c.EvaluatedTimeSeconds = evT;
+                                bool isLegacySentinel = (Math.Abs(evT + 1.0) < 1e-5) && !c.HasImageEvaluation;
+                                if (!isLegacySentinel) c.EvaluatedTimeSeconds = evT;
                             }
                             if (int.TryParse(parts[11], out evCam)) c.EvaluatedCameraIndex = evCam;
                         }
@@ -1178,6 +1278,14 @@ namespace OptiFinish.Core
                         {
                             c.HasImageEvaluation = true;
                             c.EvaluatedTimeSeconds = c.RawTimeSeconds;
+                        }
+                        if (parts.Length >= 13)
+                        {
+                            int po;
+                            if (int.TryParse(parts[12], out po) && po >= 0 && Enum.IsDefined(typeof(TimePrecision), po))
+                            {
+                                c.PrecisionOverride = (TimePrecision)po;
+                            }
                         }
                         doc.Competitors.Add(c);
                     }
