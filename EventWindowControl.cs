@@ -93,6 +93,9 @@ namespace OptiFinish
         public event EventHandler<EventArgs> PrintResultsRequested;
         public event EventHandler<EventArgs> PrintImageRequested;
         public event EventHandler<EventArgs> PrintBitmapRequested;
+        public event EventHandler<EventArgs> ExportSelectionRequested;
+        public event EventHandler<EventArgs> ExportVideoRequested;
+        public event EventHandler<EventArgs> SetScoreboardImageRequested;
         public event EventHandler<EventArgs> ManualWindRequested;
         public event EventHandler<EventArgs> ManualStartRequested;
         public event EventHandler<EventArgs> ArmToggleRequested;
@@ -584,8 +587,20 @@ namespace OptiFinish
             _vp2.QuickEvaluateRequested += OnViewportQuickEvaluate;
             _vp1.SetZeroOriginRequested += OnViewportSetZeroOrigin;
             _vp2.SetZeroOriginRequested += OnViewportSetZeroOrigin;
-            _vp1.SelectionActionCompleted += delegate { RefreshCameraBars(); };
-            _vp2.SelectionActionCompleted += delegate { RefreshCameraBars(); };
+            _vp1.SelectionActionCompleted += delegate { RefreshCameraBars(); if (DocumentModified != null) DocumentModified(this, EventArgs.Empty); };
+            _vp2.SelectionActionCompleted += delegate { RefreshCameraBars(); if (DocumentModified != null) DocumentModified(this, EventArgs.Empty); };
+            _vp1.ExportSelectionRequested += delegate { _activeCamIdx = 0; if (ExportSelectionRequested != null) ExportSelectionRequested(this, EventArgs.Empty); };
+            _vp2.ExportSelectionRequested += delegate { _activeCamIdx = 1; if (ExportSelectionRequested != null) ExportSelectionRequested(this, EventArgs.Empty); };
+            _vp1.ExportVideoSelectionRequested += delegate { _activeCamIdx = 0; if (ExportVideoRequested != null) ExportVideoRequested(this, EventArgs.Empty); };
+            _vp2.ExportVideoSelectionRequested += delegate { _activeCamIdx = 1; if (ExportVideoRequested != null) ExportVideoRequested(this, EventArgs.Empty); };
+            _vp1.PrintSelectionRequested += delegate { _activeCamIdx = 0; if (PrintImageRequested != null) PrintImageRequested(this, EventArgs.Empty); };
+            _vp2.PrintSelectionRequested += delegate { _activeCamIdx = 1; if (PrintImageRequested != null) PrintImageRequested(this, EventArgs.Empty); };
+            _vp1.PrintBitmapSelectionRequested += delegate { _activeCamIdx = 0; if (PrintBitmapRequested != null) PrintBitmapRequested(this, EventArgs.Empty); };
+            _vp2.PrintBitmapSelectionRequested += delegate { _activeCamIdx = 1; if (PrintBitmapRequested != null) PrintBitmapRequested(this, EventArgs.Empty); };
+            _vp1.SetScoreboardImageRequested += delegate { _activeCamIdx = 0; if (SetScoreboardImageRequested != null) SetScoreboardImageRequested(this, EventArgs.Empty); };
+            _vp2.SetScoreboardImageRequested += delegate { _activeCamIdx = 1; if (SetScoreboardImageRequested != null) SetScoreboardImageRequested(this, EventArgs.Empty); };
+            _vp1.OpenAdjustmentsRequested += delegate { _activeCamIdx = 0; if (OpenImageAdjustmentsRequested != null) OpenImageAdjustmentsRequested(this, EventArgs.Empty); };
+            _vp2.OpenAdjustmentsRequested += delegate { _activeCamIdx = 1; if (OpenImageAdjustmentsRequested != null) OpenImageAdjustmentsRequested(this, EventArgs.Empty); };
             _vp1.Enter += delegate { _activeCamIdx = 0; };
             _vp2.Enter += delegate { _activeCamIdx = 1; };
 
@@ -1568,6 +1583,126 @@ namespace OptiFinish
         {
             if (_vp1 != null) _vp1.Invalidate();
             if (_vp2 != null) _vp2.Invalidate();
+        }
+
+        public CropWindow GetActiveExportCrop()
+        {
+            SlitScanViewportControl vp = ActiveViewport;
+            return vp != null ? vp.GetEffectiveExportCrop() : null;
+        }
+
+        public void ClearSelectionBox()
+        {
+            if (_vp1 != null) _vp1.ClearSelectionBox();
+            if (_vp2 != null) _vp2.ClearSelectionBox();
+        }
+
+        public void SelectAllImage()
+        {
+            SlitScanViewportControl vp = ActiveViewport;
+            if (vp != null) vp.SelectAllStrip();
+        }
+
+        public void PerformUndo()
+        {
+            if (_doc == null || _doc.UndoActions == null || _doc.UndoActions.Count == 0) return;
+            Action undo = _doc.UndoActions.Pop();
+            if (undo != null)
+            {
+                undo();
+                RefreshAll();
+                if (StatusHintChanged != null) StatusHintChanged("Undid last image / crop action.");
+            }
+        }
+
+        public void NavigateSplit(int delta)
+        {
+            if (_doc == null) return;
+            if (_doc.SplitLocations != null && _doc.SplitLocations.Count > 0)
+            {
+                int n = _doc.SplitLocations.Count;
+                _doc.ActiveCaptureSplitIndex = ((_doc.ActiveCaptureSplitIndex + delta) % n + n) % n;
+                RefreshInformationGrid();
+                SplitLocationDef sp = _doc.SplitLocations[_doc.ActiveCaptureSplitIndex];
+                if (ActiveViewport != null) ActiveViewport.CenterOnTime(sp.CaptureStartSeconds);
+                if (StatusHintChanged != null) StatusHintChanged("Active split: " + sp.Name);
+                return;
+            }
+            CompetitorEntry c = GetSelectedCompetitor();
+            if (c != null && c.Splits != null && c.Splits.Count > 0 && ActiveViewport != null)
+            {
+                double curT = ActiveViewport.CursorTimeSeconds;
+                int best = 0;
+                if (delta > 0)
+                {
+                    best = c.Splits.Count - 1;
+                    for (int i = 0; i < c.Splits.Count; i++)
+                    {
+                        if (c.Splits[i].CumulativeSeconds > curT + 0.002) { best = i; break; }
+                    }
+                }
+                else
+                {
+                    best = 0;
+                    for (int i = c.Splits.Count - 1; i >= 0; i--)
+                    {
+                        if (c.Splits[i].CumulativeSeconds < curT - 0.002) { best = i; break; }
+                    }
+                }
+                ActiveViewport.CenterOnTime(c.Splits[best].CumulativeSeconds);
+            }
+        }
+
+        public void ApplyDefaultResultFields()
+        {
+            string[] defaultOn = new string[]
+            {
+                "Place", "Id", "Lane", "FirstName", "LastName", "Affiliation",
+                "Time", "Delta", "ReacTime", "CumSplit", "Laps", "Speed"
+            };
+            HashSet<string> enabledSet = new HashSet<string>(defaultOn, StringComparer.OrdinalIgnoreCase);
+            List<ResultFieldConfig> fields = LynxExtendedConfig.Instance.ResultFields;
+            for (int i = 0; i < fields.Count; i++)
+            {
+                fields[i].Enabled = enabledSet.Contains(fields[i].Key);
+            }
+            LynxExtendedConfig.Instance.Save();
+            RefreshResultsGrid();
+            if (StatusHintChanged != null) StatusHintChanged("Applied default result fields.");
+        }
+
+        public void DeleteSelectedObject()
+        {
+            SlitScanViewportControl vp = ActiveViewport;
+            if (vp != null && vp.HasActiveSelectionBox)
+            {
+                vp.ClearSelectionBox();
+                if (StatusHintChanged != null) StatusHintChanged("Cleared selection box.");
+                return;
+            }
+            if (_doc != null && _doc.Overlays.Count > 0)
+            {
+                int idx = _doc.Overlays.Count - 1;
+                ImageOverlayItem removed = _doc.Overlays[idx];
+                _doc.Overlays.RemoveAt(idx);
+                _doc.UndoActions.Push(delegate { _doc.Overlays.Add(removed); InvalidateViewports(); });
+                InvalidateViewports();
+                if (DocumentModified != null) DocumentModified(this, EventArgs.Empty);
+                if (StatusHintChanged != null) StatusHintChanged("Removed last text overlay.");
+                return;
+            }
+            if (_doc != null && _doc.Annotations.Count > 0)
+            {
+                _doc.Annotations.RemoveAt(_doc.Annotations.Count - 1);
+                InvalidateViewports();
+                if (DocumentModified != null) DocumentModified(this, EventArgs.Empty);
+                if (StatusHintChanged != null) StatusHintChanged("Removed last annotation.");
+                return;
+            }
+            if (_dgvResults != null && _dgvResults.SelectedRows.Count > 0)
+            {
+                DeleteSelectedResultRow();
+            }
         }
     }
 }

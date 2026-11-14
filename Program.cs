@@ -94,7 +94,68 @@ namespace OptiFinish
             MeetDatabaseService.ExportResultsLifOrCsv(doc, lifPath);
 
             string optrPath = Path.Combine(sampleDir, "100m_Hurdles_Women.optr");
+            CropWindow testCrop = new CropWindow(180, 620, 0.15f, 0.75f);
+            doc.Cameras[0].ActiveCrop = testCrop;
+            doc.Cameras[0].BrightnessOffset = 12;
+            doc.Overlays.Add(new ImageOverlayItem
+            {
+                GroupIndex = 2,
+                TimeSeconds = doc.Cameras[0].ColumnToTimeSeconds(360),
+                VerticalRatio = 0.45f,
+                Text = "Test Crop Overlay",
+                OverlayColor = Color.Yellow,
+                Visible = true
+            });
             MeetDatabaseService.SaveNativeRacePackage(doc, optrPath);
+
+            // Verify crop + SaveBitmapToFile (.jpg, .png, .tga) + PrintDialogSettings + .optr reload
+            using (Bitmap directCrop = SlitScanEngine.RenderDirectExportBitmap(doc, 0, testCrop, true))
+            {
+                string cropJpg = Path.Combine(sampleDir, "TestCrop_Direct.jpg");
+                string cropPng = Path.Combine(sampleDir, "TestCrop_Direct.png");
+                string cropTga = Path.Combine(sampleDir, "TestCrop_Direct.tga");
+                SlitScanEngine.SaveBitmapToFile(directCrop, cropJpg, 92);
+                SlitScanEngine.SaveBitmapToFile(directCrop, cropPng, 92);
+                SlitScanEngine.SaveBitmapToFile(directCrop, cropTga, 92);
+                report.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                    "Cropped Direct Export: {0}x{1}px (jpg={2}B, png={3}B, tga={4}B)",
+                    directCrop.Width, directCrop.Height,
+                    new FileInfo(cropJpg).Length, new FileInfo(cropPng).Length, new FileInfo(cropTga).Length));
+            }
+
+            PrintDialogSettings pCfg = new PrintDialogSettings
+            {
+                Zoom = 2,
+                Smooth = true,
+                Dpi = 600,
+                LaneBarsOn = true,
+                LimitResOn = true,
+                LimitResValue = 800,
+                PrintResultsOn = true,
+                MaxResults = 4,
+                ResultsRange = "1-3"
+            };
+            using (Bitmap annotCrop = SlitScanEngine.RenderAnnotatedExportBitmap(doc, 0, testCrop, pCfg))
+            {
+                string annotCropPng = Path.Combine(sampleDir, "TestCrop_Annotated.png");
+                SlitScanEngine.SaveBitmapToFile(annotCrop, annotCropPng, 92);
+                report.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                    "Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): {0}x{1}px ({2}B)",
+                    annotCrop.Width, annotCrop.Height, new FileInfo(annotCropPng).Length));
+            }
+
+            using (RaceEventDocument reloaded = MeetDatabaseService.LoadNativeRacePackage(optrPath))
+            {
+                CropWindow rc = reloaded.Cameras.Count > 0 ? reloaded.Cameras[0].ActiveCrop : null;
+                report.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                    ".optr Round-Trip: Cams={0}, Competitors={1}, Overlays={2}, Crop=[{3}..{4}, {5:0.00}..{6:0.00}], Brightness={7}",
+                    reloaded.Cameras.Count, reloaded.Competitors.Count, reloaded.Overlays.Count,
+                    rc != null ? rc.StartCol : -1, rc != null ? rc.EndCol : -1,
+                    rc != null ? rc.TopRatio : -1f, rc != null ? rc.BottomRatio : -1f,
+                    reloaded.Cameras.Count > 0 ? reloaded.Cameras[0].BrightnessOffset : 0));
+            }
+            doc.Cameras[0].ActiveCrop = null;
+            doc.Cameras[0].BrightnessOffset = 0;
 
             // Dead-heat preset test
             RaceEventDocument deadHeatDoc = MeetDatabaseService.CreateSample100mMenDeadHeat();

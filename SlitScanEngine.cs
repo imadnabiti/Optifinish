@@ -1686,30 +1686,275 @@ namespace OptiFinish.Core
             }
         }
 
+        public static CropWindow ResolveEffectiveCrop(RaceEventDocument doc, SlitCameraStream cam, CropWindow cropOverride)
+        {
+            if (cropOverride != null) return cropOverride;
+            if (cam != null && cam.ActiveCrop != null) return cam.ActiveCrop;
+            if (doc != null && cam != null && cam.TotalColumns > 1 &&
+                (doc.MarkedStartFrameTime.HasValue || doc.MarkedEndFrameTime.HasValue))
+            {
+                double t0 = doc.MarkedStartFrameTime ?? cam.ColumnToTimeSeconds(0);
+                double t1 = doc.MarkedEndFrameTime ?? cam.ColumnToTimeSeconds(cam.TotalColumns - 1);
+                double cA = cam.TimeSecondsToColumn(t0);
+                double cB = cam.TimeSecondsToColumn(t1);
+                int sCol = Math.Max(0, (int)Math.Floor(Math.Min(cA, cB)));
+                int eCol = Math.Min(cam.TotalColumns - 1, (int)Math.Ceiling(Math.Max(cA, cB)));
+                if (eCol > sCol + 1)
+                {
+                    return new CropWindow(sCol, eCol, 0f, 1f);
+                }
+            }
+            return null;
+        }
+
+        private static bool MatchesResultsRange(int placeOrIndex, string rangeSpec)
+        {
+            if (string.IsNullOrWhiteSpace(rangeSpec)) return true;
+            string[] tokens = rangeSpec.Split(new char[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                string tok = tokens[i].Trim();
+                int dash = tok.IndexOf('-');
+                if (dash > 0)
+                {
+                    int a, b;
+                    if (int.TryParse(tok.Substring(0, dash), out a) && int.TryParse(tok.Substring(dash + 1), out b))
+                    {
+                        int lo = Math.Min(a, b);
+                        int hi = Math.Max(a, b);
+                        if (placeOrIndex >= lo && placeOrIndex <= hi) return true;
+                    }
+                }
+                else
+                {
+                    int v;
+                    if (int.TryParse(tok, out v) && v == placeOrIndex) return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>
-        /// Renders a complete, official annotated photo-finish composite image (with race header,
-        /// time scale ruler, lane grid, evaluated competitor hairlines & tags, and bottom results table)
-        /// for saving to PNG/JPEG or printing.
+        /// Renders a direct cropped/selected image export (used by SelectionPopup -> Export... and Image -> Export...).
         /// </summary>
-        public static Bitmap RenderAnnotatedExportBitmap(RaceEventDocument doc, int cameraIndex)
+        public static Bitmap RenderDirectExportBitmap(RaceEventDocument doc, int cameraIndex, CropWindow cropOverride, bool includeOverlays)
         {
             if (doc == null || doc.Cameras.Count == 0)
             {
-                return new Bitmap(1200, 700);
+                return new Bitmap(640, 480, PixelFormat.Format24bppRgb);
             }
 
             int camIdx = Math.Max(0, Math.Min(doc.Cameras.Count - 1, cameraIndex));
             SlitCameraStream cam = doc.Cameras[camIdx];
+
+            if (cam.IsVideo)
+            {
+                Bitmap frame = cam.GetVideoFrame(cam.ActiveVideoFrameIndex);
+                if (frame == null) return new Bitmap(640, 480, PixelFormat.Format24bppRgb);
+                double vScale = Math.Max(0.1, Math.Min(2.0, LynxExtendedConfig.Instance.ImageExportScale / 100.0));
+                int vw = Math.Max(16, (int)Math.Round(frame.Width * vScale));
+                int vh = Math.Max(16, (int)Math.Round(frame.Height * vScale));
+                Bitmap vb = new Bitmap(vw, vh, PixelFormat.Format24bppRgb);
+                using (Graphics vg = Graphics.FromImage(vb))
+                {
+                    vg.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    vg.DrawImage(frame, new Rectangle(0, 0, vw, vh));
+                }
+                return vb;
+            }
+
             UpdateDisplayBitmap(cam);
             Bitmap strip = cam.DisplayStripBitmap ?? cam.RawStripBitmap;
+            if (strip == null) return new Bitmap(640, 480, PixelFormat.Format24bppRgb);
 
-            int outW = Math.Max(1280, Math.Min(2600, strip.Width + 80));
+            CropWindow effCrop = ResolveEffectiveCrop(doc, cam, cropOverride);
+            int sCol = effCrop != null ? Math.Max(0, Math.Min(strip.Width - 2, effCrop.StartCol)) : 0;
+            int eCol = effCrop != null ? Math.Max(sCol + 1, Math.Min(strip.Width - 1, effCrop.EndCol)) : (strip.Width - 1);
+            float vTop = effCrop != null ? Math.Max(0f, Math.Min(0.95f, effCrop.TopRatio)) : 0f;
+            float vBot = effCrop != null ? Math.Max(vTop + 0.05f, Math.Min(1f, effCrop.BottomRatio)) : 1f;
+
+            int srcW = Math.Max(2, eCol - sCol + 1);
+            float srcY = vTop * strip.Height;
+            float srcH = Math.Max(2f, (vBot - vTop) * strip.Height);
+
+            double scale = Math.Max(0.1, Math.Min(4.0, LynxExtendedConfig.Instance.ImageExportScale / 100.0));
+            double vStretch = Math.Max(0.5, Math.Min(3.0, cam.VerticalStretch > 0.1 ? cam.VerticalStretch : 1.0));
+            int outW = Math.Max(16, Math.Min(8000, (int)Math.Round(srcW * scale)));
+            int outH = Math.Max(16, Math.Min(4000, (int)Math.Round(srcH * scale * vStretch)));
+
+            Bitmap outBmp = new Bitmap(outW, outH, PixelFormat.Format24bppRgb);
+            using (Graphics g = Graphics.FromImage(outBmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+                g.InterpolationMode = scale > 1.05 ? InterpolationMode.HighQualityBicubic : InterpolationMode.Bilinear;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+
+                RectangleF srcRect = new RectangleF(sCol, srcY, srcW, srcH);
+                RectangleF dstRect = new RectangleF(0f, 0f, outW, outH);
+                g.DrawImage(strip, dstRect, srcRect, GraphicsUnit.Pixel);
+
+                if (includeOverlays)
+                {
+                    // Draw evaluated hash lines that intersect [sCol..eCol]
+                    doc.RecalculatePlaces();
+                    Color hashCol = LynxExtendedConfig.ColorFromName(LynxExtendedConfig.Instance.HashColorName, Color.Red);
+                    using (Pen hashPen = new Pen(Color.FromArgb(220, hashCol), Math.Max(1f, LynxExtendedConfig.Instance.HashWidth)))
+                    using (Font tagFont = new Font("Segoe UI", 8.5f, FontStyle.Bold))
+                    {
+                        for (int i = 0; i < doc.Competitors.Count; i++)
+                        {
+                            CompetitorEntry c = doc.Competitors[i];
+                            if (!c.HasValidNumericTime) continue;
+                            double col = cam.TimeSecondsToColumn(c.RawTimeSeconds);
+                            if (col < sCol || col > eCol) continue;
+                            float px = (float)(((col - sCol) / Math.Max(1.0, eCol - sCol)) * outW);
+                            g.DrawLine(hashPen, px, 0f, px, outH);
+
+                            if (c.EvaluatedVerticalRatio >= vTop && c.EvaluatedVerticalRatio <= vBot)
+                            {
+                                float py = ((c.EvaluatedVerticalRatio - vTop) / Math.Max(0.01f, vBot - vTop)) * outH;
+                                string tag = string.Format(CultureInfo.InvariantCulture, "#{0} {1} ({2})",
+                                    c.Place > 0 ? c.Place.ToString(CultureInfo.InvariantCulture) : "-",
+                                    !string.IsNullOrEmpty(c.LastName) ? c.LastName : c.BibId,
+                                    c.GetFormattedOfficialTime(doc.Precision));
+                                SizeF sz = g.MeasureString(tag, tagFont);
+                                float bx = Math.Max(2f, Math.Min(outW - sz.Width - 10f, px + 3f));
+                                float by = Math.Max(2f, Math.Min(outH - sz.Height - 6f, py - sz.Height * 0.5f));
+                                using (SolidBrush pbg = new SolidBrush(Color.FromArgb(200, 15, 23, 42)))
+                                {
+                                    g.FillRectangle(pbg, bx, by, sz.Width + 6f, sz.Height + 3f);
+                                    g.DrawString(tag, tagFont, Brushes.White, bx + 3f, by + 1.5f);
+                                }
+                            }
+                        }
+                    }
+
+                    // Draw user overlays within cropped bounds
+                    for (int oi = 0; oi < doc.Overlays.Count; oi++)
+                    {
+                        ImageOverlayItem ov = doc.Overlays[oi];
+                        if (ov == null || !ov.Visible) continue;
+                        int grpIdx = Math.Max(0, Math.Min(8, ov.GroupIndex));
+                        if (doc.OverlayGroupVisible != null && !doc.OverlayGroupVisible[grpIdx]) continue;
+                        double col = cam.TimeSecondsToColumn(ov.TimeSeconds);
+                        if (ov.Kind != ImageOverlayKind.EventName && (col < sCol || col > eCol)) continue;
+                        float sx = ov.Kind == ImageOverlayKind.EventName ? 8f : (float)(((col - sCol) / Math.Max(1.0, eCol - sCol)) * outW);
+                        float sy = ov.Kind == ImageOverlayKind.EventName ? 8f : ((ov.VerticalRatio - vTop) / Math.Max(0.01f, vBot - vTop)) * outH;
+                        using (Font ovFont = new Font(!string.IsNullOrEmpty(ov.FontName) ? ov.FontName : "Arial", Math.Max(7f, Math.Min(28f, ov.FontSizePt > 0 ? ov.FontSizePt : 10f)), ov.FontBold ? FontStyle.Bold : FontStyle.Regular))
+                        using (SolidBrush fg = new SolidBrush(ov.OverlayColor.A > 0 ? ov.OverlayColor : Color.Yellow))
+                        using (SolidBrush bg = new SolidBrush(Color.FromArgb(180, 15, 23, 42)))
+                        {
+                            if (ov.ShowLine)
+                            {
+                                using (Pen lp = new Pen(fg.Color, 1.4f)) g.DrawLine(lp, sx, 0f, sx, outH);
+                            }
+                            SizeF osz = g.MeasureString(ov.Text, ovFont);
+                            g.FillRectangle(bg, sx, sy, osz.Width + 6f, osz.Height + 3f);
+                            g.DrawString(ov.Text, ovFont, fg, sx + 3f, sy + 1.5f);
+                        }
+                    }
+                }
+            }
+            return outBmp;
+        }
+
+        /// <summary>
+        /// Renders a complete, official annotated photo-finish composite image (honoring active crop/selection
+        /// and PrintDialogSettings: Zoom, Smooth, DPI, ImageHeight, LaneBars, PrintResults, MaxResults, Range).
+        /// </summary>
+        public static Bitmap RenderAnnotatedExportBitmap(RaceEventDocument doc, int cameraIndex)
+        {
+            return RenderAnnotatedExportBitmap(doc, cameraIndex, null, LynxExtendedConfig.Instance.PrintDialogOptions);
+        }
+
+        public static Bitmap RenderAnnotatedExportBitmap(RaceEventDocument doc, int cameraIndex, CropWindow cropOverride, PrintDialogSettings printCfg)
+        {
+            if (doc == null || doc.Cameras.Count == 0)
+            {
+                return new Bitmap(1200, 700, PixelFormat.Format24bppRgb);
+            }
+
+            if (printCfg == null) printCfg = new PrintDialogSettings();
+
+            int camIdx = Math.Max(0, Math.Min(doc.Cameras.Count - 1, cameraIndex));
+            SlitCameraStream cam = doc.Cameras[camIdx];
+
+            if (cam.IsVideo)
+            {
+                Bitmap frame = cam.GetVideoFrame(cam.ActiveVideoFrameIndex);
+                if (frame == null) return new Bitmap(960, 640, PixelFormat.Format24bppRgb);
+                Bitmap vb = new Bitmap(frame.Width, frame.Height + 76, PixelFormat.Format24bppRgb);
+                using (Graphics vg = Graphics.FromImage(vb))
+                using (Font fTitle = new Font("Segoe UI", 13f, FontStyle.Bold))
+                using (SolidBrush dark = new SolidBrush(Color.FromArgb(15, 23, 42)))
+                {
+                    vg.Clear(Color.White);
+                    vg.FillRectangle(dark, 0, 0, vb.Width, 64);
+                    vg.DrawString(doc.EventName + " — IdentiLynx Video Frame", fTitle, Brushes.White, 14f, 16f);
+                    vg.DrawImage(frame, 0, 70, frame.Width, frame.Height);
+                }
+                return vb;
+            }
+
+            UpdateDisplayBitmap(cam);
+            Bitmap strip = cam.DisplayStripBitmap ?? cam.RawStripBitmap;
+            if (strip == null) return new Bitmap(1200, 700, PixelFormat.Format24bppRgb);
+
+            CropWindow effCrop = ResolveEffectiveCrop(doc, cam, cropOverride);
+            int sCol = effCrop != null ? Math.Max(0, Math.Min(strip.Width - 2, effCrop.StartCol)) : 0;
+            int eCol = effCrop != null ? Math.Max(sCol + 1, Math.Min(strip.Width - 1, effCrop.EndCol)) : (strip.Width - 1);
+            float vTop = effCrop != null ? Math.Max(0f, Math.Min(0.95f, effCrop.TopRatio)) : 0f;
+            float vBot = effCrop != null ? Math.Max(vTop + 0.05f, Math.Min(1f, effCrop.BottomRatio)) : 1f;
+
+            int srcW = Math.Max(2, eCol - sCol + 1);
+            float srcY = vTop * strip.Height;
+            float srcH = Math.Max(2f, (vBot - vTop) * strip.Height);
+
+            int zoom = Math.Max(1, Math.Min(8, printCfg.Zoom));
+            int dpiFactor = printCfg.LimitResOn ? 1 : (printCfg.Dpi >= 1200 ? 2 : 1);
+            int stripLeft = printCfg.LaneBarsOn ? 48 : 16;
+            int desiredStripW = Math.Max(900, Math.Min(3600, srcW * zoom * dpiFactor));
+            int outW = Math.Max(1100, Math.Min(3680, desiredStripW + stripLeft + 16));
+            int stripDrawW = outW - stripLeft - 16;
+
+            double heightScale = Math.Max(0.4, Math.Min(2.5, printCfg.UseCentimeters ? (printCfg.ImageHeight / 10.87) : (printCfg.ImageHeight / 4.28)));
+            double vStretch = Math.Max(0.5, Math.Min(3.0, cam.VerticalStretch > 0.1 ? cam.VerticalStretch : 1.0));
+            int stripH = Math.Max(180, Math.Min(1800, (int)Math.Round(srcH * heightScale * vStretch)));
+
             int headerH = 72;
             int rulerH = 32;
-            int stripH = strip.Height;
             int tableRowH = 26;
-            int tableRows = Math.Max(1, doc.Competitors.Count);
-            int tableH = 44 + tableRows * tableRowH + 20;
+
+            doc.RecalculatePlaces();
+            List<CompetitorEntry> sorted = new List<CompetitorEntry>();
+            for (int i = 0; i < doc.Competitors.Count; i++)
+            {
+                sorted.Add(doc.Competitors[i]);
+            }
+            sorted.Sort(delegate(CompetitorEntry a, CompetitorEntry b)
+            {
+                if (a.HasValidNumericTime && b.HasValidNumericTime) return a.RawTimeSeconds.CompareTo(b.RawTimeSeconds);
+                if (a.HasValidNumericTime) return -1;
+                if (b.HasValidNumericTime) return 1;
+                return a.Lane.CompareTo(b.Lane);
+            });
+
+            List<CompetitorEntry> printableRows = new List<CompetitorEntry>();
+            if (printCfg.PrintResultsOn)
+            {
+                int maxCap = Math.Max(1, printCfg.MaxResults);
+                for (int i = 0; i < sorted.Count && printableRows.Count < maxCap; i++)
+                {
+                    int placeNum = sorted[i].Place > 0 ? sorted[i].Place : (i + 1);
+                    if (MatchesResultsRange(placeNum, printCfg.ResultsRange))
+                    {
+                        printableRows.Add(sorted[i]);
+                    }
+                }
+            }
+
+            int tableH = printCfg.PrintResultsOn ? (44 + Math.Max(1, printableRows.Count) * tableRowH + 20) : 16;
             int outH = headerH + rulerH + stripH + tableH;
 
             Bitmap composite = new Bitmap(outW, outH, PixelFormat.Format24bppRgb);
@@ -1718,6 +1963,11 @@ namespace OptiFinish.Core
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
                 g.Clear(Color.FromArgb(248, 250, 252));
+
+                double tStart = cam.ColumnToTimeSeconds(sCol);
+                double tEnd = cam.ColumnToTimeSeconds(eCol);
+                double tMin = Math.Min(tStart, tEnd);
+                double tMax = Math.Max(tStart, tEnd);
 
                 // 1. Top Official Banner
                 Rectangle headerRect = new Rectangle(0, 0, outW, headerH);
@@ -1735,55 +1985,67 @@ namespace OptiFinish.Core
                 using (SolidBrush whiteBrush = new SolidBrush(Color.White))
                 using (SolidBrush mutedBrush = new SolidBrush(Color.FromArgb(203, 213, 225)))
                 {
-                    string title = string.Format(CultureInfo.InvariantCulture, "{0} — Event {1} (Round {2}, Heat {3})",
-                        doc.EventName, doc.EventNumber, doc.RoundNumber, doc.HeatNumber);
+                    string cropTag = effCrop != null
+                        ? string.Format(CultureInfo.InvariantCulture, "   [Crop: {0:0.000}s – {1:0.000}s]", tMin, tMax)
+                        : "";
+                    string title = string.Format(CultureInfo.InvariantCulture, "{0} — Event {1} (Round {2}, Heat {3}){4}",
+                        doc.EventName, doc.EventNumber, doc.RoundNumber, doc.HeatNumber, cropTag);
                     g.DrawString(title, titleFont, whiteBrush, 20f, 12f);
 
                     string meta = string.Format(CultureInfo.InvariantCulture,
-                        "{0}   |   Wind: {1}   |   Camera: {2} ({3} Hz)   |   Gun Time: {4:HH:mm:ss.ffff}",
-                        doc.CompetitionName, doc.GetWindFormatted(), cam.DisplayName, cam.SampleRateHz, doc.GunTimeOfDay);
+                        "{0}   |   Wind: {1}   |   Camera: {2} ({3} Hz)   |   Zoom {4}x ({5} DPI)   |   Gun: {6:HH:mm:ss.ffff}",
+                        doc.CompetitionName, doc.GetWindFormatted(), cam.DisplayName, cam.SampleRateHz, zoom, printCfg.Dpi, doc.GunTimeOfDay);
                     g.DrawString(meta, subFont, mutedBrush, 20f, 42f);
                 }
 
                 // 2. Time Ruler Bar
-                int stripLeft = 48;
-                int stripDrawW = outW - stripLeft - 16;
                 Rectangle rulerRect = new Rectangle(stripLeft, headerH, stripDrawW, rulerH);
                 using (SolidBrush rb = new SolidBrush(Color.FromArgb(30, 41, 59)))
                 {
                     g.FillRectangle(rb, 0, headerH, outW, rulerH);
                 }
 
-                // 3. Draw Strip Image
+                // 3. Draw Cropped / Selected Strip Image
                 Rectangle stripRect = new Rectangle(stripLeft, headerH + rulerH, stripDrawW, stripH);
-                g.DrawImage(strip, stripRect);
+                InterpolationMode prevInterp = g.InterpolationMode;
+                g.InterpolationMode = printCfg.Smooth ? InterpolationMode.HighQualityBicubic : InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.DrawImage(strip,
+                    new RectangleF(stripRect.Left, stripRect.Top, stripRect.Width, stripRect.Height),
+                    new RectangleF(sCol, srcY, srcW, srcH),
+                    GraphicsUnit.Pixel);
+                g.InterpolationMode = prevInterp;
+                g.PixelOffsetMode = PixelOffsetMode.Default;
 
-                // Lane Gutter on Left
-                using (SolidBrush gutterBrush = new SolidBrush(Color.FromArgb(230, 15, 23, 42)))
+                // Optional Lane Gutter Bar (honors vertical crop vTop..vBot!)
+                if (printCfg.LaneBarsOn)
                 {
-                    g.FillRectangle(gutterBrush, 0, headerH + rulerH, stripLeft, stripH);
-                }
-
-                float topCurbY = stripRect.Top + stripH * doc.LaneTopRatio;
-                float bottomCurbY = stripRect.Top + stripH * doc.LaneBottomRatio;
-                float laneH = (bottomCurbY - topCurbY) / Math.Max(1, doc.LaneCount);
-                using (Font laneFont = new Font("Segoe UI", 9f, FontStyle.Bold))
-                using (SolidBrush laneText = new SolidBrush(Color.FromArgb(241, 245, 249)))
-                using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                {
-                    for (int ln = 1; ln <= doc.LaneCount; ln++)
+                    using (SolidBrush gutterBrush = new SolidBrush(Color.FromArgb(230, 15, 23, 42)))
                     {
-                        float ly = topCurbY + (ln - 0.5f) * laneH;
-                        g.DrawString("L" + ln, laneFont, laneText, new RectangleF(0, ly - 10f, stripLeft, 20f), sf);
+                        g.FillRectangle(gutterBrush, 0, headerH + rulerH, stripLeft, stripH);
+                    }
+
+                    using (Font laneFont = new Font("Segoe UI", 9f, FontStyle.Bold))
+                    using (SolidBrush laneText = new SolidBrush(Color.FromArgb(241, 245, 249)))
+                    using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                    {
+                        for (int ln = 1; ln <= doc.LaneCount; ln++)
+                        {
+                            float centerRatio = doc.LaneToCenterRatio(ln);
+                            if (centerRatio < vTop || centerRatio > vBot) continue;
+                            float ly = stripRect.Top + ((centerRatio - vTop) / Math.Max(0.01f, vBot - vTop)) * stripRect.Height;
+                            g.DrawString("L" + ln, laneFont, laneText, new RectangleF(0, ly - 10f, stripLeft, 20f), sf);
+                        }
                     }
                 }
 
-                // Time Ruler Ticks
-                double tStart = cam.ColumnToTimeSeconds(0);
-                double tEnd = cam.ColumnToTimeSeconds(strip.Width - 1);
-                double tMin = Math.Min(tStart, tEnd);
-                double tMax = Math.Max(tStart, tEnd);
-                double stepSec = (tMax - tMin) <= 2.5 ? 0.05 : 0.10;
+                // Time Ruler Ticks calibrated strictly to cropped column range [sCol..eCol]
+                double spanSec = Math.Max(0.001, tMax - tMin);
+                double stepSec = spanSec <= 0.15 ? 0.01
+                               : spanSec <= 0.45 ? 0.02
+                               : spanSec <= 1.20 ? 0.05
+                               : spanSec <= 3.00 ? 0.10
+                               : spanSec <= 8.00 ? 0.25 : 0.50;
                 double firstTick = Math.Ceiling(tMin / stepSec) * stepSec;
 
                 using (Pen tickPen = new Pen(Color.FromArgb(148, 163, 184), 1f))
@@ -1791,21 +2053,21 @@ namespace OptiFinish.Core
                 using (SolidBrush tickBrush = new SolidBrush(Color.White))
                 {
                     float lastLabelPx = -9999f;
-                    for (double t = firstTick; t <= tMax; t += stepSec)
+                    for (double t = firstTick; t <= tMax + stepSec * 0.25; t += stepSec)
                     {
                         double col = cam.TimeSecondsToColumn(t);
-                        float px = stripRect.Left + (float)(col / Math.Max(1, strip.Width)) * stripRect.Width;
+                        float px = stripRect.Left + (float)(((col - sCol) / Math.Max(1.0, eCol - sCol)) * stripRect.Width);
                         if (px < stripRect.Left || px > stripRect.Right) continue;
                         if (Math.Abs(px - lastLabelPx) < 52f) continue;
                         g.DrawLine(tickPen, px, rulerRect.Bottom - 8, px, rulerRect.Bottom);
-                        g.DrawString(t.ToString("0.00", CultureInfo.InvariantCulture) + "s", tickFont, tickBrush, px - 18f, rulerRect.Top + 4f);
+                        string lbl = stepSec < 0.05 ? t.ToString("0.000", CultureInfo.InvariantCulture) + "s" : t.ToString("0.00", CultureInfo.InvariantCulture) + "s";
+                        g.DrawString(lbl, tickFont, tickBrush, px - 18f, rulerRect.Top + 4f);
                         lastLabelPx = px;
                     }
                 }
 
-                // 4. Draw Evaluated Competitor Hash Lines & Labels
-                doc.RecalculatePlaces();
-                using (Pen evalLinePen = new Pen(Color.FromArgb(230, 239, 68, 68), 1.8f))
+                // 4. Draw Evaluated Competitor Hash Lines & Labels inside the cropped range
+                using (Pen evalLinePen = new Pen(Color.FromArgb(230, 239, 68, 68), Math.Max(1.2f, LynxExtendedConfig.Instance.HashWidth)))
                 using (Font tagFont = new Font("Segoe UI", 8.5f, FontStyle.Bold))
                 {
                     for (int i = 0; i < doc.Competitors.Count; i++)
@@ -1814,76 +2076,380 @@ namespace OptiFinish.Core
                         if (!c.HasValidNumericTime) continue;
 
                         double col = cam.TimeSecondsToColumn(c.RawTimeSeconds);
-                        float px = stripRect.Left + (float)(col / Math.Max(1, strip.Width)) * stripRect.Width;
+                        if (col < sCol || col > eCol) continue;
+                        float px = stripRect.Left + (float)(((col - sCol) / Math.Max(1.0, eCol - sCol)) * stripRect.Width);
                         if (px < stripRect.Left || px > stripRect.Right) continue;
 
                         g.DrawLine(evalLinePen, px, stripRect.Top, px, stripRect.Bottom);
 
-                        float py = stripRect.Top + c.EvaluatedVerticalRatio * stripRect.Height;
-                        string tag = string.Format(CultureInfo.InvariantCulture, "#{0} {1} ({2})",
-                            c.Place, c.LastName, c.GetFormattedOfficialTime(doc.Precision));
-                        SizeF sz = g.MeasureString(tag, tagFont);
-                        RectangleF pill = new RectangleF(px + 4f, Math.Max(stripRect.Top + 4f, py - sz.Height - 2f), sz.Width + 8f, sz.Height + 4f);
-                        using (SolidBrush pillBg = new SolidBrush(Color.FromArgb(225, 15, 23, 42)))
-                        using (Pen pillBorder = new Pen(Color.FromArgb(248, 113, 113), 1f))
-                        using (SolidBrush pillFg = new SolidBrush(Color.White))
+                        if (c.EvaluatedVerticalRatio >= vTop && c.EvaluatedVerticalRatio <= vBot)
                         {
-                            g.FillRectangle(pillBg, pill);
-                            g.DrawRectangle(pillBorder, pill.X, pill.Y, pill.Width, pill.Height);
-                            g.DrawString(tag, tagFont, pillFg, pill.X + 4f, pill.Y + 2f);
+                            float py = stripRect.Top + ((c.EvaluatedVerticalRatio - vTop) / Math.Max(0.01f, vBot - vTop)) * stripRect.Height;
+                            string tag = string.Format(CultureInfo.InvariantCulture, "#{0} {1} ({2})",
+                                c.Place, c.LastName, c.GetFormattedOfficialTime(doc.Precision));
+                            SizeF sz = g.MeasureString(tag, tagFont);
+                            float pillX = Math.Max(stripRect.Left + 2f, Math.Min(stripRect.Right - sz.Width - 10f, px + 4f));
+                            float pillY = Math.Max(stripRect.Top + 4f, Math.Min(stripRect.Bottom - sz.Height - 6f, py - sz.Height - 2f));
+                            RectangleF pill = new RectangleF(pillX, pillY, sz.Width + 8f, sz.Height + 4f);
+                            using (SolidBrush pillBg = new SolidBrush(Color.FromArgb(225, 15, 23, 42)))
+                            using (Pen pillBorder = new Pen(Color.FromArgb(248, 113, 113), 1f))
+                            using (SolidBrush pillFg = new SolidBrush(Color.White))
+                            {
+                                g.FillRectangle(pillBg, pill);
+                                g.DrawRectangle(pillBorder, pill.X, pill.Y, pill.Width, pill.Height);
+                                g.DrawString(tag, tagFont, pillFg, pill.X + 4f, pill.Y + 2f);
+                            }
                         }
                     }
                 }
 
-                // 5. Official Results Summary Table at Bottom
-                int tableTop = headerH + rulerH + stripH + 12;
-                using (Font hdrFont = new Font("Segoe UI", 9f, FontStyle.Bold))
-                using (Font rowFont = new Font("Segoe UI", 9f, FontStyle.Regular))
-                using (SolidBrush hdrBg = new SolidBrush(Color.FromArgb(226, 232, 240)))
-                using (SolidBrush textDark = new SolidBrush(Color.FromArgb(15, 23, 42)))
-                using (Pen rowLine = new Pen(Color.FromArgb(226, 232, 240), 1f))
+                // Overlays clipped to cropped area
+                if (doc.Overlays != null)
                 {
-                    g.FillRectangle(hdrBg, 20, tableTop, outW - 40, 26);
-                    int[] colX = new int[] { 28, 90, 150, 230, 420, 650, 790, 910, 1030 };
-                    string[] headers = new string[] { "Place", "Lane", "Bib", "Athlete", "Affiliation", "Official Time", "Delta", "ReacTime", "Speed" };
-                    for (int c = 0; c < headers.Length; c++)
+                    for (int oi = 0; oi < doc.Overlays.Count; oi++)
                     {
-                        g.DrawString(headers[c], hdrFont, textDark, colX[c], tableTop + 5);
+                        ImageOverlayItem ov = doc.Overlays[oi];
+                        if (ov == null || !ov.Visible) continue;
+                        int grpIdx = Math.Max(0, Math.Min(8, ov.GroupIndex));
+                        if (doc.OverlayGroupVisible != null && !doc.OverlayGroupVisible[grpIdx]) continue;
+                        double col = cam.TimeSecondsToColumn(ov.TimeSeconds);
+                        if (ov.Kind != ImageOverlayKind.EventName && (col < sCol || col > eCol)) continue;
+                        float sx = ov.Kind == ImageOverlayKind.EventName ? (stripRect.Left + 8f) : (stripRect.Left + (float)(((col - sCol) / Math.Max(1.0, eCol - sCol)) * stripRect.Width));
+                        float sy = ov.Kind == ImageOverlayKind.EventName ? (stripRect.Top + 8f) : (stripRect.Top + ((ov.VerticalRatio - vTop) / Math.Max(0.01f, vBot - vTop)) * stripRect.Height);
+                        using (Font ovFont = new Font(!string.IsNullOrEmpty(ov.FontName) ? ov.FontName : "Arial", Math.Max(7f, Math.Min(28f, ov.FontSizePt > 0 ? ov.FontSizePt : 10f)), ov.FontBold ? FontStyle.Bold : FontStyle.Regular))
+                        using (SolidBrush fg = new SolidBrush(ov.OverlayColor.A > 0 ? ov.OverlayColor : Color.Yellow))
+                        using (SolidBrush bg = new SolidBrush(Color.FromArgb(190, 15, 23, 42)))
+                        {
+                            SizeF osz = g.MeasureString(ov.Text, ovFont);
+                            g.FillRectangle(bg, sx, sy, osz.Width + 6f, osz.Height + 3f);
+                            g.DrawString(ov.Text, ovFont, fg, sx + 3f, sy + 1.5f);
+                        }
                     }
+                }
 
-                    List<CompetitorEntry> sorted = new List<CompetitorEntry>(doc.Competitors);
-                    sorted.Sort(delegate(CompetitorEntry a, CompetitorEntry b)
+                // 5. Optional Official Results Summary Table at Bottom (honors PrintResultsOn, MaxResults, ResultsRange)
+                if (printCfg.PrintResultsOn)
+                {
+                    int tableTop = headerH + rulerH + stripH + 12;
+                    using (Font hdrFont = new Font("Segoe UI", 9f, FontStyle.Bold))
+                    using (Font rowFont = new Font("Segoe UI", 9f, FontStyle.Regular))
+                    using (SolidBrush hdrBg = new SolidBrush(Color.FromArgb(226, 232, 240)))
+                    using (SolidBrush textDark = new SolidBrush(Color.FromArgb(15, 23, 42)))
+                    using (Pen rowLine = new Pen(Color.FromArgb(226, 232, 240), 1f))
                     {
-                        if (a.HasValidNumericTime && b.HasValidNumericTime) return a.RawTimeSeconds.CompareTo(b.RawTimeSeconds);
-                        if (a.HasValidNumericTime) return -1;
-                        if (b.HasValidNumericTime) return 1;
-                        return a.Lane.CompareTo(b.Lane);
-                    });
+                        g.FillRectangle(hdrBg, 20, tableTop, outW - 40, 26);
+                        int[] colX = new int[] { 28, 90, 150, 230, 420, 650, 790, 910, 1030 };
+                        string[] headers = new string[] { "Place", "Lane", "Bib", "Athlete", "Affiliation", "Official Time", "Delta", "ReacTime", "Speed" };
+                        for (int c = 0; c < headers.Length; c++)
+                        {
+                            g.DrawString(headers[c], hdrFont, textDark, colX[c], tableTop + 5);
+                        }
 
-                    int ry = tableTop + 28;
-                    for (int r = 0; r < sorted.Count; r++)
-                    {
-                        CompetitorEntry comp = sorted[r];
-                        string fullName = (comp.LastName + ", " + comp.FirstName).Trim(' ', ',');
-                        string reac = !double.IsNaN(comp.ReactionTimeSeconds) && comp.ReactionTimeSeconds > 0
-                            ? comp.ReactionTimeSeconds.ToString("0.000", CultureInfo.InvariantCulture) + "s" : "";
+                        int ry = tableTop + 28;
+                        for (int r = 0; r < printableRows.Count; r++)
+                        {
+                            CompetitorEntry comp = printableRows[r];
+                            string fullName = (comp.LastName + ", " + comp.FirstName).Trim(' ', ',');
+                            string reac = !double.IsNaN(comp.ReactionTimeSeconds) && comp.ReactionTimeSeconds > 0
+                                ? comp.ReactionTimeSeconds.ToString("0.000", CultureInfo.InvariantCulture) + "s" : "";
 
-                        g.DrawString(comp.GetPlaceDisplay(), hdrFont, textDark, colX[0], ry + 4);
-                        g.DrawString(comp.Lane > 0 ? comp.Lane.ToString(CultureInfo.InvariantCulture) : "-", rowFont, textDark, colX[1], ry + 4);
-                        g.DrawString(comp.BibId, rowFont, textDark, colX[2], ry + 4);
-                        g.DrawString(fullName, hdrFont, textDark, colX[3], ry + 4);
-                        g.DrawString(comp.Affiliation, rowFont, textDark, colX[4], ry + 4);
-                        g.DrawString(comp.GetFormattedOfficialTime(doc.Precision), hdrFont, textDark, colX[5], ry + 4);
-                        g.DrawString(doc.FormatDeltaForCompetitor(comp), rowFont, textDark, colX[6], ry + 4);
-                        g.DrawString(reac, rowFont, textDark, colX[7], ry + 4);
-                        g.DrawString(comp.GetFormattedSpeed(doc.DistanceMeters, doc.SpeedUnit), rowFont, textDark, colX[8], ry + 4);
+                            g.DrawString(comp.GetPlaceDisplay(), hdrFont, textDark, colX[0], ry + 4);
+                            g.DrawString(comp.Lane > 0 ? comp.Lane.ToString(CultureInfo.InvariantCulture) : "-", rowFont, textDark, colX[1], ry + 4);
+                            g.DrawString(comp.BibId, rowFont, textDark, colX[2], ry + 4);
+                            g.DrawString(fullName, hdrFont, textDark, colX[3], ry + 4);
+                            g.DrawString(comp.Affiliation, rowFont, textDark, colX[4], ry + 4);
+                            g.DrawString(comp.GetFormattedOfficialTime(doc.Precision), hdrFont, textDark, colX[5], ry + 4);
+                            g.DrawString(doc.FormatDeltaForCompetitor(comp), rowFont, textDark, colX[6], ry + 4);
+                            g.DrawString(reac, rowFont, textDark, colX[7], ry + 4);
+                            g.DrawString(comp.GetFormattedSpeed(doc.DistanceMeters, doc.SpeedUnit), rowFont, textDark, colX[8], ry + 4);
 
-                        g.DrawLine(rowLine, 20, ry + tableRowH - 1, outW - 20, ry + tableRowH - 1);
-                        ry += tableRowH;
+                            g.DrawLine(rowLine, 20, ry + tableRowH - 1, outW - 20, ry + tableRowH - 1);
+                            ry += tableRowH;
+                        }
                     }
                 }
             }
             return composite;
+        }
+
+        public static void SaveBitmapToFile(Bitmap bmp, string filePath, int jpegQuality)
+        {
+            if (bmp == null || string.IsNullOrEmpty(filePath)) return;
+            string dir = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            string ext = Path.GetExtension(filePath).ToLowerInvariant();
+            if (ext == ".tga")
+            {
+                SaveTga24(bmp, filePath);
+                return;
+            }
+            if (ext == ".jpg" || ext == ".jpeg")
+            {
+                ImageCodecInfo jpegCodec = null;
+                ImageCodecInfo[] codecs = ImageCodecInfo.GetImageEncoders();
+                for (int i = 0; i < codecs.Length; i++)
+                {
+                    if (codecs[i].FormatID == ImageFormat.Jpeg.Guid)
+                    {
+                        jpegCodec = codecs[i];
+                        break;
+                    }
+                }
+                if (jpegCodec != null)
+                {
+                    using (EncoderParameters ep = new EncoderParameters(1))
+                    {
+                        long q = Math.Max(10L, Math.Min(100L, jpegQuality > 0 ? jpegQuality : 85));
+                        ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, q);
+                        bmp.Save(filePath, jpegCodec, ep);
+                        return;
+                    }
+                }
+                bmp.Save(filePath, ImageFormat.Jpeg);
+                return;
+            }
+            if (ext == ".bmp")
+            {
+                bmp.Save(filePath, ImageFormat.Bmp);
+                return;
+            }
+            bmp.Save(filePath, ImageFormat.Png);
+        }
+
+        private static void SaveTga24(Bitmap bmp, string filePath)
+        {
+            int w = bmp.Width;
+            int h = bmp.Height;
+            byte[] header = new byte[18];
+            header[2] = 2; // Uncompressed True-Color
+            header[12] = (byte)(w & 0xFF);
+            header[13] = (byte)((w >> 8) & 0xFF);
+            header[14] = (byte)(h & 0xFF);
+            header[15] = (byte)((h >> 8) & 0xFF);
+            header[16] = 24;
+            header[17] = 0x20; // Top-to-bottom origin
+
+            BitmapData bd = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+            try
+            {
+                int stride = Math.Abs(bd.Stride);
+                int rowBytes = w * 3;
+                byte[] pixels = new byte[h * rowBytes];
+                byte[] line = new byte[stride];
+                long basePtr = bd.Scan0.ToInt64();
+                for (int y = 0; y < h; y++)
+                {
+                    Marshal.Copy(new IntPtr(basePtr + (long)y * stride), line, 0, rowBytes);
+                    Buffer.BlockCopy(line, 0, pixels, y * rowBytes, rowBytes);
+                }
+                using (FileStream fs = File.Create(filePath))
+                {
+                    fs.Write(header, 0, 18);
+                    fs.Write(pixels, 0, pixels.Length);
+                }
+            }
+            finally
+            {
+                bmp.UnlockBits(bd);
+            }
+        }
+
+        /// <summary>
+        /// Exports the selected/cropped slit-scan region or IdentiLynx video stream to a standard MJPEG RIFF .avi video file.
+        /// </summary>
+        public static void ExportVideoSequence(RaceEventDocument doc, int cameraIndex, CropWindow cropOverride, string filePath)
+        {
+            if (doc == null || doc.Cameras.Count == 0 || string.IsNullOrEmpty(filePath)) return;
+            int camIdx = Math.Max(0, Math.Min(doc.Cameras.Count - 1, cameraIndex));
+            SlitCameraStream cam = doc.Cameras[camIdx];
+
+            List<byte[]> jpegFrames = new List<byte[]>();
+            int frameW = 640;
+            int frameH = 480;
+            int fps = 15;
+
+            ImageCodecInfo jpegCodec = null;
+            ImageCodecInfo[] codecs = ImageCodecInfo.GetImageEncoders();
+            for (int i = 0; i < codecs.Length; i++)
+            {
+                if (codecs[i].FormatID == ImageFormat.Jpeg.Guid) { jpegCodec = codecs[i]; break; }
+            }
+
+            if (cam.IsVideo && cam.VideoFrameJpegBuffers != null && cam.VideoFrameJpegBuffers.Count > 0)
+            {
+                fps = Math.Max(5, Math.Min(30, cam.SampleRateHz > 0 ? cam.SampleRateHz : 15));
+                frameW = Math.Max(64, cam.VideoFrameWidth > 0 ? cam.VideoFrameWidth : 640);
+                frameH = Math.Max(64, cam.VideoFrameHeight > 0 ? cam.VideoFrameHeight : 480);
+                for (int i = 0; i < cam.VideoFrameJpegBuffers.Count; i++)
+                {
+                    jpegFrames.Add(cam.VideoFrameJpegBuffers[i]);
+                }
+            }
+            else
+            {
+                using (Bitmap cropped = RenderDirectExportBitmap(doc, camIdx, cropOverride, true))
+                {
+                    frameW = Math.Min(800, Math.Max(320, cropped.Width));
+                    frameH = Math.Min(600, Math.Max(240, cropped.Height));
+                    frameW = (frameW + 3) & ~3;
+                    frameH = (frameH + 3) & ~3;
+
+                    int winW = Math.Min(cropped.Width, frameW);
+                    int numFrames = cropped.Width > winW + 40 ? 45 : 24;
+                    using (Bitmap canvas = new Bitmap(frameW, frameH, PixelFormat.Format24bppRgb))
+                    using (Graphics g = Graphics.FromImage(canvas))
+                    {
+                        g.InterpolationMode = InterpolationMode.Bilinear;
+                        for (int f = 0; f < numFrames; f++)
+                        {
+                            double t = numFrames > 1 ? (double)f / (numFrames - 1) : 0.0;
+                            float srcX = (float)(t * Math.Max(0, cropped.Width - winW));
+                            g.Clear(Color.Black);
+                            g.DrawImage(cropped, new RectangleF(0, 0, frameW, frameH), new RectangleF(srcX, 0, winW, cropped.Height), GraphicsUnit.Pixel);
+                            using (MemoryStream ms = new MemoryStream())
+                            {
+                                if (jpegCodec != null)
+                                {
+                                    using (EncoderParameters ep = new EncoderParameters(1))
+                                    {
+                                        ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)Math.Max(30, Math.Min(100, LynxExtendedConfig.Instance.VideoExportJpegQuality)));
+                                        canvas.Save(ms, jpegCodec, ep);
+                                    }
+                                }
+                                else
+                                {
+                                    canvas.Save(ms, ImageFormat.Jpeg);
+                                }
+                                jpegFrames.Add(ms.ToArray());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (jpegFrames.Count > 0)
+            {
+                WriteMjpegAvi(filePath, jpegFrames, frameW, frameH, fps);
+            }
+        }
+
+        private static void WriteMjpegAvi(string filePath, List<byte[]> frames, int width, int height, int fps)
+        {
+            using (FileStream fs = File.Create(filePath))
+            using (BinaryWriter bw = new BinaryWriter(fs))
+            {
+                uint numFrames = (uint)frames.Count;
+                uint usecPerFrame = (uint)(1000000 / Math.Max(1, fps));
+                uint maxBuf = 0;
+                for (int i = 0; i < frames.Count; i++) if ((uint)frames[i].Length > maxBuf) maxBuf = (uint)frames[i].Length;
+
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+                long riffSizePos = fs.Position;
+                bw.Write((uint)0);
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("AVI "));
+
+                // LIST 'hdrl'
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("LIST"));
+                long hdrlSizePos = fs.Position;
+                bw.Write((uint)0);
+                long hdrlStart = fs.Position;
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("hdrl"));
+
+                // 'avih' (56 bytes)
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("avih"));
+                bw.Write((uint)56);
+                bw.Write(usecPerFrame);
+                bw.Write((uint)(maxBuf * fps));
+                bw.Write((uint)0);
+                bw.Write((uint)0x10); // AVIF_HASINDEX
+                bw.Write(numFrames);
+                bw.Write((uint)0);
+                bw.Write((uint)1);
+                bw.Write(maxBuf);
+                bw.Write((uint)width);
+                bw.Write((uint)height);
+                bw.Write((uint)0); bw.Write((uint)0); bw.Write((uint)0); bw.Write((uint)0);
+
+                // LIST 'strl'
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("LIST"));
+                long strlSizePos = fs.Position;
+                bw.Write((uint)0);
+                long strlStart = fs.Position;
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("strl"));
+
+                // 'strh' (56 bytes)
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("strh"));
+                bw.Write((uint)56);
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("vids"));
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("MJPG"));
+                bw.Write((uint)0);
+                bw.Write((ushort)0); bw.Write((ushort)0);
+                bw.Write((uint)0);
+                bw.Write((uint)1);
+                bw.Write((uint)fps);
+                bw.Write((uint)0);
+                bw.Write(numFrames);
+                bw.Write(maxBuf);
+                bw.Write((uint)0);
+                bw.Write((uint)0);
+                bw.Write((ushort)0); bw.Write((ushort)0); bw.Write((ushort)width); bw.Write((ushort)height);
+
+                // 'strf' (40 bytes BITMAPINFOHEADER)
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("strf"));
+                bw.Write((uint)40);
+                bw.Write((uint)40);
+                bw.Write((int)width);
+                bw.Write((int)height);
+                bw.Write((ushort)1);
+                bw.Write((ushort)24);
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("MJPG"));
+                bw.Write((uint)(width * height * 3));
+                bw.Write((int)0); bw.Write((int)0); bw.Write((uint)0); bw.Write((uint)0);
+
+                long strlEnd = fs.Position;
+                fs.Position = strlSizePos; bw.Write((uint)(strlEnd - strlStart)); fs.Position = strlEnd;
+                long hdrlEnd = fs.Position;
+                fs.Position = hdrlSizePos; bw.Write((uint)(hdrlEnd - hdrlStart)); fs.Position = hdrlEnd;
+
+                // LIST 'movi'
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("LIST"));
+                long moviSizePos = fs.Position;
+                bw.Write((uint)0);
+                long moviStart = fs.Position;
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("movi"));
+
+                uint[] offsets = new uint[frames.Count];
+                uint[] lengths = new uint[frames.Count];
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    offsets[i] = (uint)(fs.Position - moviStart);
+                    byte[] fBytes = frames[i];
+                    lengths[i] = (uint)fBytes.Length;
+                    bw.Write(System.Text.Encoding.ASCII.GetBytes("00dc"));
+                    bw.Write((uint)fBytes.Length);
+                    bw.Write(fBytes);
+                    if ((fBytes.Length & 1) != 0) bw.Write((byte)0);
+                }
+
+                long moviEnd = fs.Position;
+                fs.Position = moviSizePos; bw.Write((uint)(moviEnd - moviStart)); fs.Position = moviEnd;
+
+                // 'idx1'
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("idx1"));
+                bw.Write((uint)(frames.Count * 16));
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    bw.Write(System.Text.Encoding.ASCII.GetBytes("00dc"));
+                    bw.Write((uint)0x10);
+                    bw.Write(offsets[i]);
+                    bw.Write(lengths[i]);
+                }
+
+                long riffEnd = fs.Position;
+                fs.Position = riffSizePos;
+                bw.Write((uint)(riffEnd - 8));
+            }
         }
 
         private static Color ShiftLuminance(Color c, int delta)

@@ -1,5 +1,5 @@
 ﻿=== OptiFinish Studio Clean-Room Verification Report ===
-Timestamp: 2026-11-12 11:56:32
+Timestamp: 2026-11-14 17:33:04
 Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   Place  1 | Lane 6 | Bib #643  | Vaughn, Angela     | Raw=12.8432s | Official(0.01)=12.85 | Official(0.001)=12.844 | Speed=7.79 m/s
   Place  2 | Lane 7 | Bib #391  | Lawson, Tonya      | Raw=12.8818s | Official(0.01)=12.89 | Official(0.001)=12.882 | Speed=7.76 m/s
@@ -9,8 +9,11 @@ Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   Place  6 | Lane 8 | Bib #53   | Bowles, Dawn       | Raw=13.0890s | Official(0.01)=13.09 | Official(0.001)=13.089 | Speed=7.64 m/s
   Place  7 | Lane 2 | Bib #413  | Lott, Tiffany      | Raw=13.1405s | Official(0.01)=13.15 | Official(0.001)=13.141 | Speed=7.61 m/s
   Place  8 | Lane 1 | Bib #436  | McCray, Yolanda    | Raw=13.2188s | Official(0.01)=13.22 | Official(0.001)=13.219 | Speed=7.56 m/s
+Cropped Direct Export: 441x336px (jpg=42436B, png=27772B, tga=444546B)
+Cropped Annotated Print/Bitmap Export (Zoom2, 600DPI, LimitRes800, Results 1-3): 1100x582px (91590B)
+.optr Round-Trip: Cams=2, Competitors=8, Overlays=1, Crop=[180..620, 0.15..0.75], Brightness=12
 
-=== Native C:\Lynx .evn + .i01/.i02/.spl Decoder Verification (3 files) ===
+=== Native C:\Lynx .evn + .i01/.i02/.spl Decoder Verification (8 files) ===
   [1] punto zero.evn -> Event='punto zero' (001-25-01), Competitors=0, Cameras=2, Splits=0
       Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (1240x1024 px, 5000 Hz, 155 blocks) | Span=54874.7247s..54874.9725s
       Cam 2: 'Camera 2' | IdentiLynx Video (162 frames, 2048x1536 px @ 20 fps) | Span=54871.3310s..54879.1259s
@@ -27,6 +30,24 @@ Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   [3] Sprint.evn -> Event='100 Meter Hurdles Women' (017-2-01), Competitors=8, Cameras=2, Splits=0
       Cam 1: 'Inside Maine' | Lynx EtherLynx RGB555 RLE (867x500 px, 1200 Hz, 11 blocks) | Span=12.7373s..13.5686s
       Cam 2: 'Outside Maine' | Lynx EtherLynx RGB555 RLE (737x500 px, 1000 Hz, 8 blocks) | Span=12.7297s..13.5706s
+      Winner: #643 Vaughn, Angela (Lane 6) -> Raw=12.7973s, Official=12.80
+  [4] 1 Mile Run Men (4-1-1).evn -> Event='1 Mile Run Men' (004-1-01), Competitors=16, Cameras=2, Splits=18
+      Cam 1: 'Inside' | Lynx EtherLynx RGB555 RLE (3122x500 px, 1000 Hz, 31 blocks) | Span=229.8191s..241.5243s
+      Cam 2: '1500Split' | Lynx EtherLynx RGB555 RLE (3407x500 px, 1000 Hz, 45 blocks) | Span=39.6946s..245.7302s
+      Winner: #25 El Guerrouj, Hicham (Lane 14) -> Raw=229.9176s, Official=3:49.92
+  [5] 1500 Meter Run Intermediate Boys (454-1-1).evn -> Event='1500 Meter Run Intermediate Boys' (454-1-01), Competitors=9, Cameras=1, Splits=0
+      Cam 1: 'Primary' | Lynx EtherLynx 24-bit 8xBlock (6142x1360 px, 2000 Hz, 223 blocks) | Span=255.2326s..305.6326s
+      Winner: #1560 Roller, Lance (Lane 6) -> Raw=255.3306s, Official=4:15.34
+  [6] Men 110 Meter Hurdles (15-3-2).evn -> Event='Men 110 Meter Hurdles' (015-3-02), Competitors=8, Cameras=1, Splits=0
+      Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (1946x1360 px, 3000 Hz, 118 blocks) | Span=13.0419s..16.8379s
+      Winner: #1130 Trammell, Terrence (Lane 5) -> Raw=13.1326s, Official=13.14
+  [7] Men 200 Meter Dash (3-4-1).evn -> Event='Men 200 Meter Dash' (003-4-01), Competitors=8, Cameras=1, Splits=0
+      Cam 1: 'Camera 1' | Lynx EtherLynx 24-bit 8xBlock (4987x2000 px, 4500 Hz, 502 blocks) | Span=19.8553s..21.0684s
+      Winner: #228 Crawford, Shawn (Lane 5) -> Raw=19.9811s, Official=19.99
+  [8] Girls 1500 Meter Run (1-1-1).evn -> Event='Girls 1500 Meter Run' (001-1-01), Competitors=11, Cameras=2, Splits=0
+      Cam 1: 'PRO' | Lynx EtherLynx 24-bit 8xBlock (15186x1100 px, 2000 Hz, 882 blocks) | Span=58.2913s..390.9763s
+      Cam 2: 'Camera 3' | IdentiLynx Video (276 frames, 640x512 px @ 1 fps) | Span=57.3419s..308.2684s
+      Winner: #337 Kim, Eunyeong (Lane 1) -> Raw=283.3998s, Official=4:43.40
 
 === LynxConfigService & Path Management Verification ===
   DataInDir (Database .evt/.ppl): C:\Lynx
@@ -35,5 +56,5 @@ Loaded Event: 100 Meter Hurdles Women | Cameras: 2 | Competitors: 8
   BackupDir (Autosave backup): C:\Lynx\temp
   AutoSave: False, Interval: 60s
   LayoutSelection: 0
-  Autosave Test Execution: Success=False (Autosave failed: Access to the path 'C:\Lynx\100 Meter Hurdles Women.lif' is denied.)
+  Autosave Test Execution: Success=True (Exported .lif -> 100 Meter Hurdles Women.lif; )
 MainWindow initialized: Title='OptiFinish - [punto zero]', Size=1380x860

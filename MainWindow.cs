@@ -180,6 +180,17 @@ namespace OptiFinish
         }
 
         // ===================== MENU BAR (9 Authentic Localized Menus) =====================
+        private static string CleanMenuText(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return "";
+            int idx = raw.IndexOf(',');
+            if (idx > 0 && idx < raw.Length - 1 && (raw[idx + 1] == 'S' || raw[idx + 1] == 'C' || raw[idx + 1] == 'A' || raw.Substring(idx + 1).Contains("+")))
+            {
+                return raw.Substring(0, idx);
+            }
+            return raw;
+        }
+
         private void BuildMenuBar()
         {
             if (MainMenuStrip != null)
@@ -201,6 +212,7 @@ namespace OptiFinish
             mFile.DropDownItems.Add(MkMenu(Loc.Menu("File\\New", "&New"), Keys.Control | Keys.N, delegate { CreateNewBlankEvent(); }));
             mFile.DropDownItems.Add(MkMenu(Loc.Menu("File\\Open", "&Open..."), Keys.Control | Keys.O, delegate { OpenEventDialog(); }));
             mFile.DropDownItems.Add(MkMenu(Loc.Menu("File\\QuickOpen", "Open &recent..."), Keys.Alt | Keys.O, delegate { OpenRecentDialogFlow(); }));
+            mFile.DropDownItems.Add(MkMenu(Loc.Menu("File\\NewProfile", "Create profile..."), Keys.None, delegate { CreateNewProfileFlow(); }));
             mFile.DropDownItems.Add(MkMenu(Loc.Menu("File\\CloseWindow", "Close &window"), Keys.Control | Keys.W, delegate { CloseActiveMdiEvent(); }));
             mFile.DropDownItems.Add(MkMenu(Loc.Menu("File\\Save", "&Save"), Keys.Control | Keys.S, delegate { SaveActiveEvent(false); }));
             mFile.DropDownItems.Add(MkMenu(Loc.Menu("File\\SaveAs", "Save &as..."), Keys.None, delegate { SaveActiveEvent(true); }));
@@ -239,11 +251,12 @@ namespace OptiFinish
 
             // 2. EDIT
             ToolStripMenuItem mEdit = new ToolStripMenuItem(Loc.Menu("Edit\\Title", "&Edit"));
-            mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\Undo", "&Undo"), Keys.Control | Keys.Z, delegate { SendKeys.Send("^z"); }));
+            mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\Undo", "&Undo"), Keys.Control | Keys.Z, delegate { PerformActiveUndo(); }));
             mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\Cut", "Cu&t"), Keys.Control | Keys.X, delegate { SendKeys.Send("^x"); }));
-            mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\Copy", "&Copy Time"), Keys.Control | Keys.C, delegate { CopyActiveTimeToClipboard(); }));
+            mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\Copy", "&Copy Time / Image"), Keys.Control | Keys.C, delegate { CopyActiveTimeToClipboard(); }));
             mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\Paste", "&Paste"), Keys.Control | Keys.V, delegate { SendKeys.Send("^v"); }));
             mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\Clear", "C&lear Annotation"), Keys.None, delegate { ClearActiveAnnotations(); }));
+            mEdit.DropDownItems.Add(MkMenu(Loc.Menu("Edit\\SelectAll", "&Select all"), Keys.None, delegate { if (ActiveEventControl != null) ActiveEventControl.SelectAllImage(); }));
 
             // 3. EVENT
             ToolStripMenuItem mEvent = new ToolStripMenuItem(Loc.Menu("Event\\Title", "E&vent"));
@@ -253,17 +266,22 @@ namespace OptiFinish
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\Disarm", "Disarm"), Keys.None, delegate { SetArmedState(false); }));
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\ImageStart", "&Image start"), Keys.None, delegate { ApplyImageStartFromCrosshair(); }));
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\ManualStart", "&Manual start..."), Keys.None, delegate { OpenManualStartDialog(); }));
-            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\TODStart", "T&OD start..."), Keys.None, delegate { TriggerTimeOfDayStart(); }));
+            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\TODStart", "T&OD start..."), Keys.None, delegate { OpenTodStartDialog(); }));
+            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\SelectStart", "Select start..."), Keys.None, delegate { OpenSelectStartDialog(); }));
+            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\SyncTOD", "Synchronize TOD..."), Keys.None, delegate { OpenSynchronizeTodDialog(); }));
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\SetStart", "Apply current start"), Keys.Control | Keys.T, delegate { ApplySelectedStartToEvent(); }));
             mEvent.DropDownItems.Add(new ToolStripSeparator());
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\ManualWind", "Manual &wind..."), Keys.Alt | Keys.W, delegate { OpenWindDialog(); }));
             mEvent.DropDownItems.Add(MkMenu("Simulate Ultrasonic &Wind", Keys.None, delegate { SimulateWindReading(); }));
             mEvent.DropDownItems.Add(new ToolStripSeparator());
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\ToggleCapture", "Toggle &capture"), Keys.Alt | Keys.T, delegate { ToggleCaptureState(); }));
+            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\SetCaptLeg", "Set capture"), Keys.None, delegate { SetCaptureLegFlow(); }));
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\AdvanceCaptLeg", "Advance capture"), Keys.None, delegate { if (ActiveEventControl != null) ActiveEventControl.AdvanceCaptureSplit(); }));
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\AddLeg", "Add split location..."), Keys.None, delegate { AddSplitLocationFlow(); }));
+            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\AddImage", "Add camera"), Keys.None, delegate { AddCameraToEventFlow(); }));
+            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\DeleteObject", "Delete object"), Keys.None, delegate { if (ActiveEventControl != null) ActiveEventControl.DeleteSelectedObject(); }));
             mEvent.DropDownItems.Add(new ToolStripSeparator());
-            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\ZeroTest", "&Zero gun test..."), Keys.None, delegate { OpenZeroGunTestDialog(); }));
+            mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\GunTest", "&Zero gun test..."), Keys.None, delegate { OpenZeroGunTestDialog(); }));
             mEvent.DropDownItems.Add(MkMenu(Loc.Menu("Event\\Options", "Op&tions..."), Keys.None, delegate { OpenOptions(1); }));
 
             // 4. IMAGE
@@ -307,6 +325,16 @@ namespace OptiFinish
                 mPrec.DropDownItems.Add(precNames[pi], null, delegate { SetEventPrecision(cap); });
             }
             mImage.DropDownItems.Add(mPrec);
+
+            ToolStripMenuItem mSet = new ToolStripMenuItem(Loc.Menu("Image\\Set", "Set"));
+            mSet.DropDownItems.Add(Loc.Menu("Image\\ObjectBalance", "Object threshold"), null, delegate { EditImageCalibrationSetting(0); });
+            mSet.DropDownItems.Add(Loc.Menu("Image\\ObjectArea", "Object active area"), null, delegate { EditImageCalibrationSetting(1); });
+            mSet.DropDownItems.Add(Loc.Menu("Image\\PhotoEyeBalance", "Photo eye threshold"), null, delegate { EditImageCalibrationSetting(2); });
+            mSet.DropDownItems.Add(Loc.Menu("Image\\PhotoEyeArea", "Photo eye active area"), null, delegate { EditImageCalibrationSetting(3); });
+            mSet.DropDownItems.Add(Loc.Menu("Image\\CaptureArea", "Capture area"), null, delegate { EditImageCalibrationSetting(4); });
+            mSet.DropDownItems.Add(Loc.Menu("Image\\LengthTime", "Length time"), null, delegate { EditImageCalibrationSetting(5); });
+            mImage.DropDownItems.Add(mSet);
+
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\Adjustments", "A&djustments..."), Keys.None, delegate { OpenImageAdjustmentsFloater(); }));
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\Enhance", "&Enhance"), Keys.None, delegate { ActiveVpAction(vp => vp.ToggleEnhanceAtActiveBand()); }));
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\Unenhance", "U&nenhance"), Keys.None, delegate { ActiveVpAction(vp => vp.ClearEnhance()); }));
@@ -318,16 +346,47 @@ namespace OptiFinish
             mOv.DropDownItems.Add(Loc.Menu("Image\\Overlay\\Time", "Closest time"), null, delegate { AddQuickTimeOverlay(ImageOverlayKind.ClosestTime); });
             mOv.DropDownItems.Add("Hash time", null, delegate { AddQuickTimeOverlay(ImageOverlayKind.HashTime); });
             mOv.DropDownItems.Add(Loc.Menu("Image\\Overlay\\Lanes", "Line labels..."), null, delegate { AddLineLabelOverlayFlow(); });
+            mOv.DropDownItems.Add(Loc.Menu("Image\\Overlay\\Name", "Event name..."), null, delegate { EditEventNameOverlayFlow(); });
             _mnuShowEvOverlay = MkMenu(Loc.Menu("Image\\Overlay\\NameAlways", "Show event name"), Keys.None, delegate { ToggleEventNameOverlay(); });
             mOv.DropDownItems.Add(_mnuShowEvOverlay);
+            mOv.DropDownItems.Add(new ToolStripSeparator());
+            ToolStripMenuItem[] grpMenus = new ToolStripMenuItem[8];
+            for (int gi = 1; gi <= 8; gi++)
+            {
+                int gCap = gi;
+                ToolStripMenuItem mg = new ToolStripMenuItem(Loc.Menu("Image\\Overlay\\Group" + gi, "Group " + gi))
+                {
+                    Checked = true
+                };
+                mg.Click += delegate
+                {
+                    if (ActiveDocument != null && ActiveDocument.OverlayGroupVisible != null)
+                    {
+                        ActiveDocument.OverlayGroupVisible[gCap] = !ActiveDocument.OverlayGroupVisible[gCap];
+                        mg.Checked = ActiveDocument.OverlayGroupVisible[gCap];
+                        if (ActiveEventControl != null) ActiveEventControl.InvalidateViewports();
+                    }
+                };
+                grpMenus[gi - 1] = mg;
+                mOv.DropDownItems.Add(mg);
+            }
+            mOv.DropDownOpening += delegate
+            {
+                if (ActiveDocument != null && ActiveDocument.OverlayGroupVisible != null)
+                {
+                    for (int gi = 1; gi <= 8; gi++) grpMenus[gi - 1].Checked = ActiveDocument.OverlayGroupVisible[gi];
+                }
+            };
             mImage.DropDownItems.Add(mOv);
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\RemoveOverlays", "&Remove overlays"), Keys.Control | Keys.R, delegate { RemoveAllOverlays(); }));
             _mnuRetention = MkMenu("Retain overlays", Keys.None, delegate { ToggleRetainOverlays(); });
             mImage.DropDownItems.Add(_mnuRetention);
             mImage.DropDownItems.Add(new ToolStripSeparator());
-            mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\ExportBitmap", "Export Annotated Image..."), Keys.None, delegate { ExportAnnotatedImageDialog(); }));
+            mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\ExportBitmap", "Export..."), Keys.None, delegate { ExportDirectImageDialog(); }));
+            mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\ExportVideo", "Export video..."), Keys.None, delegate { ExportVideoDialog(); }));
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\Options", "Op&tions..."), Keys.None, delegate { OpenOptions(2); }));
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\PageSetup", "Pa&ge setup..."), Keys.None, delegate { OpenPageSetupDialog(); }));
+            mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\PrinterSetup", "Printer &setup..."), Keys.None, delegate { OpenPrinterSetupDialog(); }));
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\Print", "&Print..."), Keys.None, delegate { PrintAnnotatedImagePreview(); }));
             mImage.DropDownItems.Add(MkMenu(Loc.Menu("Image\\PrintToBitmap", "Print to bitmap..."), Keys.None, delegate { ExportAnnotatedImageDialog(); }));
 
@@ -339,14 +398,18 @@ namespace OptiFinish
             mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\Find", "Find &id..."), Keys.None, delegate { OpenFindIdDialog(); }));
             mResults.DropDownItems.Add(MkMenu("Previous image", Keys.Shift | Keys.Up, delegate { if (ActiveEventControl != null) ActiveEventControl.NavigateResultSelection(-1); }));
             mResults.DropDownItems.Add(MkMenu("Next image", Keys.Shift | Keys.Down, delegate { if (ActiveEventControl != null) ActiveEventControl.NavigateResultSelection(1); }));
+            mResults.DropDownItems.Add(MkMenu(CleanMenuText(Loc.Menu("Results\\PrevSplit", "Previous split")), Keys.Shift | Keys.Left, delegate { if (ActiveEventControl != null) ActiveEventControl.NavigateSplit(-1); }));
+            mResults.DropDownItems.Add(MkMenu(CleanMenuText(Loc.Menu("Results\\NextSplit", "Next split")), Keys.Shift | Keys.Right, delegate { if (ActiveEventControl != null) ActiveEventControl.NavigateSplit(1); }));
             mResults.DropDownItems.Add(new ToolStripSeparator());
             mResults.DropDownItems.Add(MkMenu("&Auto-Evaluate Motion Peaks", Keys.None, delegate { AutoEvaluateActiveStrip(); }));
             mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\Filters", "&Filters..."), Keys.None, delegate { OpenResultsFilterDialog(); }));
             mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\AutoPackLeaders", "Set pack &leaders..."), Keys.None, delegate { SetPackLeadersFlow(); }));
+            mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\ApplyDefFields", "Apply default fields"), Keys.None, delegate { if (ActiveEventControl != null) ActiveEventControl.ApplyDefaultResultFields(); }));
             mResults.DropDownItems.Add(new ToolStripSeparator());
             mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\Options", "Op&tions..."), Keys.None, delegate { OpenOptions(3); }));
             mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\ImportReacTime", "Import ReacTime data..."), Keys.None, delegate { ImportReacTimeFlow(); }));
             mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\PageSetup", "Pa&ge setup..."), Keys.None, delegate { OpenPageSetupDialog(); }));
+            mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\PrinterSetup", "Printer &setup..."), Keys.None, delegate { OpenPrinterSetupDialog(); }));
             mResults.DropDownItems.Add(MkMenu(Loc.Menu("Results\\Print", "&Print results..."), Keys.None, delegate { PrintAnnotatedImagePreview(); }));
 
             // 6. SCOREBOARD
@@ -357,7 +420,14 @@ namespace OptiFinish
             mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\Finish", "&Finish"), Keys.Alt | Keys.F, delegate { FinishRunningClock(); }));
             mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\Stop", "&Stop"), Keys.Alt | Keys.S, delegate { StopRunningClock(); }));
             mScb.DropDownItems.Add(MkMenu("&Hold / Display results", Keys.Alt | Keys.H, delegate { ToggleScoreboardHold(); }));
+            mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\Refresh", "Refresh"), Keys.None, delegate { TransmitScoreboardNow(); }));
             mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\RefreshAll", "R&efresh all / Broadcast"), Keys.Alt | Keys.E, delegate { TransmitScoreboardNow(); }));
+            mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\DisplayCurrent", "&Display current event"), Keys.None, delegate { TransmitScoreboardNow(); }));
+            mScb.DropDownItems.Add(new ToolStripSeparator());
+            mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\PhotoEyes", "Photo eyes"), Keys.None, delegate { TogglePhotoEyesScoreboard(); }));
+            mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\ShowImage", "Show image (VDM)"), Keys.None, delegate { SendCroppedImageToScoreboard(false); }));
+            mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\ShowImageRmt", "Show image (ResulTV)"), Keys.None, delegate { SendCroppedImageToScoreboard(true); }));
+            mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\SetImage", "Set image"), Keys.None, delegate { SendCroppedImageToScoreboard(false); }));
             mScb.DropDownItems.Add(new ToolStripSeparator());
             _mnuScbTod = MkMenu(Loc.Menu("Scoreboard\\TimeOfDay", "Show time of day"), Keys.None, delegate { _clockShowTod = !_clockShowTod; if (_mnuScbTod != null) _mnuScbTod.Checked = _clockShowTod; UpdateClockText(); });
             _mnuScb24h = MkMenu(Loc.Menu("Scoreboard\\TimeOfDay24Hour", "Use 24 hour format"), Keys.None, delegate { _mnuScb24h.Checked = !_mnuScb24h.Checked; UpdateClockText(); });
@@ -365,6 +435,7 @@ namespace OptiFinish
             _mnuScbStopTime = MkMenu("Stop on-screen time", Keys.None, delegate { StopRunningClock(); });
             mScb.DropDownItems.Add(_mnuScbTod);
             mScb.DropDownItems.Add(_mnuScb24h);
+            mScb.DropDownItems.Add(MkMenu(Loc.Menu("Scoreboard\\TODOverride", "Override time of day"), Keys.None, delegate { OverrideScoreboardTodFlow(); }));
             mScb.DropDownItems.Add(_mnuScbStopTime);
             mScb.DropDownItems.Add(new ToolStripSeparator());
             mScb.DropDownItems.Add(MkMenu("Edit &message...", Keys.None, delegate { EditScoreboardMessageFlow(); }));
@@ -377,8 +448,12 @@ namespace OptiFinish
             mLap.DropDownItems.Add(MkMenu(Loc.Menu("Results\\AddSplit", "&Insert split time"), Keys.None, delegate { if (ActiveEventControl != null) ActiveEventControl.InsertSplitForSelected(); }));
             mLap.DropDownItems.Add(MkMenu(Loc.Menu("Results\\DeleteSplit", "&Mask split time"), Keys.None, delegate { if (ActiveEventControl != null) ActiveEventControl.MaskSelectedSplit(); }));
             mLap.DropDownItems.Add(MkMenu(Loc.Menu("Results\\SplitDialog", "&Edit split times..."), Keys.None, delegate { OpenLapTimeSplitsDialog(); }));
+            mLap.DropDownItems.Add(MkMenu(Loc.Menu("LapTime\\SplitKeysDlg", "Edit split keys..."), Keys.None, delegate { EditSplitKeysFlow(); }));
             mLap.DropDownItems.Add(new ToolStripSeparator());
+            mLap.DropDownItems.Add(MkMenu(Loc.Menu("LapTime\\Resend", "Resend"), Keys.None, delegate { TransmitScoreboardNow(); }));
+            mLap.DropDownItems.Add(MkMenu(Loc.Menu("LapTime\\Clear", "Clear"), Keys.None, delegate { ClearActiveLapTimeSplits(); }));
             mLap.DropDownItems.Add(MkMenu("&Use current event", Keys.Alt | Keys.L, delegate { SetHelp("LapTime linked to active event: " + (ActiveDocument != null ? ActiveDocument.EventName : "")); }));
+            mLap.DropDownItems.Add(MkMenu(Loc.Menu("LapTime\\PrintSplits", "&Print split times..."), Keys.None, delegate { PrintSplitTimesFlow(); }));
             mLap.DropDownItems.Add(MkMenu("Export &split times CSV...", Keys.None, delegate { ExportSplitCsvDialog(); }));
             mLap.DropDownItems.Add(MkMenu("Op&tions...", Keys.None, delegate { OpenOptions(7); }));
 
@@ -388,10 +463,12 @@ namespace OptiFinish
 
             // 9. HELP
             ToolStripMenuItem mHelp = new ToolStripMenuItem(Loc.Menu("Help\\Title", "&Help"));
+            mHelp.DropDownItems.Add(MkMenu(Loc.Menu("Help\\Contents", "&Contents"), Keys.None, delegate { using (HelpContentsDialog d = new HelpContentsDialog()) d.ShowDialog(this); }));
             mHelp.DropDownItems.Add(MkMenu("&Keyboard Shortcuts...", Keys.F1, delegate { ShowShortcutsDialog(); }));
             mHelp.DropDownItems.Add(new ToolStripSeparator());
             mHelp.DropDownItems.Add(MkMenu(Loc.Menu("Help\\FindCameras", "&Find cameras..."), Keys.None, delegate { using (FindCamerasDialog d = new FindCamerasDialog(ActiveDocument)) d.ShowDialog(this); }));
             mHelp.DropDownItems.Add(MkMenu(Loc.Menu("Help\\SystemInfo", "&System info..."), Keys.None, delegate { using (SystemInfoDialog d = new SystemInfoDialog(ActiveDocument)) d.ShowDialog(this); }));
+            mHelp.DropDownItems.Add(MkMenu(Loc.Menu("Help\\EnterSN", "Enter serial number..."), Keys.None, delegate { using (EnterSerialNumberDialog d = new EnterSerialNumberDialog()) d.ShowDialog(this); }));
             mHelp.DropDownItems.Add(MkMenu(Loc.Menu("Help\\About", "&About OptiFinish..."), Keys.None, delegate { using (AboutFinishLynxDialog d = new AboutFinishLynxDialog()) d.ShowDialog(this); }));
 
             ms.Items.AddRange(new ToolStripItem[] { mFile, mEdit, mEvent, mImage, mResults, mScb, mLap, _mnuWindow, mHelp });
@@ -794,6 +871,9 @@ namespace OptiFinish
             ew.PrintResultsRequested += delegate { PrintAnnotatedImagePreview(); };
             ew.PrintImageRequested += delegate { PrintAnnotatedImagePreview(); };
             ew.PrintBitmapRequested += delegate { ExportAnnotatedImageDialog(); };
+            ew.ExportSelectionRequested += delegate { ExportDirectImageDialog(); };
+            ew.ExportVideoRequested += delegate { ExportVideoDialog(); };
+            ew.SetScoreboardImageRequested += delegate { SendCroppedImageToScoreboard(false); };
             ew.ManualWindRequested += delegate { OpenWindDialog(); };
             ew.ManualStartRequested += delegate { OpenManualStartDialog(); };
             ew.ArmToggleRequested += delegate { ToggleArmState(); };
@@ -980,7 +1060,9 @@ namespace OptiFinish
                 string ext = Path.GetExtension(path).ToLowerInvariant();
                 RaceEventDocument doc = (ext == ".evn")
                     ? MeetDatabaseService.LoadNativeLynxEventFile(path)
-                    : MeetDatabaseService.LoadResultsFile(path);
+                    : (ext == ".optr"
+                        ? MeetDatabaseService.LoadNativeRacePackage(path)
+                        : MeetDatabaseService.LoadResultsFile(path));
                 if (doc != null)
                 {
                     if (doc.Cameras.Count == 0) SlitScanEngine.BuildSynthesizedCameraStrips(doc);
@@ -1011,15 +1093,25 @@ namespace OptiFinish
             {
                 using (SaveFileDialog sfd = new SaveFileDialog())
                 {
-                    sfd.Filter = "OptiFinish Race Package (*.optr)|*.optr|LIF Official Results (*.lif)|*.lif";
+                    sfd.Filter = "OptiFinish Race Package (*.optr)|*.optr|JPEG Image (*.jpg)|*.jpg|PNG Image (*.png)|*.png|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga|LIF Official Results (*.lif)|*.lif";
                     sfd.FileName = doc.GetEventCodeString() + ".optr";
                     if (sfd.ShowDialog(this) != DialogResult.OK) return;
                     path = sfd.FileName;
                 }
             }
-            if (path.EndsWith(".lif", StringComparison.OrdinalIgnoreCase))
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext == ".lif")
             {
                 MeetDatabaseService.ExportResultsLifOrCsv(doc, path);
+            }
+            else if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".tga")
+            {
+                int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
+                CropWindow crop = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
+                using (Bitmap bmp = SlitScanEngine.RenderDirectExportBitmap(doc, ci, crop, true))
+                {
+                    SlitScanEngine.SaveBitmapToFile(bmp, path, LynxExtendedConfig.Instance.ImageExportJpegQuality);
+                }
             }
             else
             {
@@ -1568,18 +1660,17 @@ namespace OptiFinish
         private void AddTextOverlayFlow()
         {
             if (ActiveDocument == null || ActiveEventControl == null || ActiveEventControl.ActiveViewport == null) return;
-            using (SimplePromptDialog d = new SimplePromptDialog("Add Text Overlay", "Overlay text at cursor:", "Official Finish"))
+            double curT = ActiveEventControl.ActiveViewport.CursorTimeSeconds;
+            float curY = ActiveEventControl.ActiveViewport.CursorVerticalRatio;
+            using (TextOverlayDialog d = new TextOverlayDialog(curT, curY))
             {
-                if (d.ShowDialog(this) == DialogResult.OK && !string.IsNullOrWhiteSpace(d.ValueText))
+                if (d.ShowDialog(this) == DialogResult.OK && d.OverlayItem != null && !string.IsNullOrWhiteSpace(d.OverlayItem.Text))
                 {
-                    ActiveDocument.Overlays.Add(new ImageOverlayItem
-                    {
-                        Kind = ImageOverlayKind.Text,
-                        Text = d.ValueText.Trim(),
-                        TimeSeconds = ActiveEventControl.ActiveViewport.CursorTimeSeconds,
-                        VerticalRatio = ActiveEventControl.ActiveViewport.CursorVerticalRatio
-                    });
+                    ImageOverlayItem added = d.OverlayItem;
+                    ActiveDocument.Overlays.Add(added);
+                    ActiveDocument.UndoActions.Push(delegate { ActiveDocument.Overlays.Remove(added); if (ActiveEventControl != null) ActiveEventControl.InvalidateViewports(); });
                     ActiveEventControl.InvalidateViewports();
+                    SetHelp("Added text overlay: " + added.Text);
                 }
             }
         }
@@ -1638,7 +1729,29 @@ namespace OptiFinish
         private void ClearMarkedFrames() { if (ActiveDocument != null) { ActiveDocument.MarkedStartFrameTime = null; ActiveDocument.MarkedEndFrameTime = null; if (ActiveEventControl != null) ActiveEventControl.InvalidateViewports(); } }
         private void SetEventPrecision(TimePrecision p) { if (ActiveDocument != null) { ActiveDocument.Precision = p; if (ActiveEventControl != null) ActiveEventControl.RefreshAll(); } }
         private void ClearActiveAnnotations() { if (ActiveDocument != null) { ActiveDocument.Annotations.Clear(); if (ActiveEventControl != null) ActiveEventControl.InvalidateViewports(); } }
-        private void CopyActiveTimeToClipboard() { if (ActiveDocument != null && ActiveEventControl != null && ActiveEventControl.ActiveViewport != null) Clipboard.SetText(CompetitorEntry.FormatSeconds(ActiveEventControl.ActiveViewport.CursorTimeSeconds, ActiveDocument.Precision)); }
+        private void CopyActiveTimeToClipboard()
+        {
+            if (ActiveDocument == null || ActiveEventControl == null || ActiveEventControl.ActiveViewport == null) return;
+            string timeText = CompetitorEntry.FormatSeconds(ActiveEventControl.ActiveViewport.CursorTimeSeconds, ActiveDocument.Precision);
+            try
+            {
+                int ci = ActiveEventControl.ActiveCameraIndex;
+                CropWindow crop = ActiveEventControl.GetActiveExportCrop();
+                using (Bitmap bmp = SlitScanEngine.RenderDirectExportBitmap(ActiveDocument, ci, crop, true))
+                {
+                    DataObject data = new DataObject();
+                    data.SetData(DataFormats.Text, timeText);
+                    if (bmp != null) data.SetData(DataFormats.Bitmap, true, bmp);
+                    Clipboard.SetDataObject(data, true);
+                }
+                SetHelp("Copied time (" + timeText + ") and image selection to clipboard.");
+            }
+            catch
+            {
+                Clipboard.SetText(timeText);
+                SetHelp("Copied time: " + timeText);
+            }
+        }
 
         private void OpenFullScreen(bool two)
         {
@@ -1702,21 +1815,105 @@ namespace OptiFinish
             using (PrintPageSetupDialog d = new PrintPageSetupDialog(LynxExtendedConfig.Instance.PrintSettings)) d.ShowDialog(this);
         }
 
+        private void OpenPrinterSetupDialog()
+        {
+            try
+            {
+                using (System.Drawing.Printing.PrintDocument pd = new System.Drawing.Printing.PrintDocument())
+                using (PrintDialog dlg = new PrintDialog())
+                {
+                    pd.DefaultPageSettings.Landscape = LynxExtendedConfig.Instance.PrintSettings.Landscape;
+                    dlg.Document = pd;
+                    if (dlg.ShowDialog(this) == DialogResult.OK)
+                    {
+                        LynxExtendedConfig.Instance.PrintSettings.Landscape = pd.DefaultPageSettings.Landscape;
+                        LynxExtendedConfig.Instance.Save();
+                        SetHelp("Printer settings updated.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Printer setup unavailable:\n" + ex.Message, "Printer Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void ExportDirectImageDialog()
+        {
+            if (ActiveDocument == null) return;
+            int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
+            CropWindow cropOverride = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Filter = "JPEG Image (*.jpg)|*.jpg|PNG Image (*.png)|*.png|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga";
+                sfd.FileName = ActiveDocument.GetEventCodeString() + ".jpg";
+                if (sfd.ShowDialog(this) == DialogResult.OK)
+                {
+                    using (Bitmap bmp = SlitScanEngine.RenderDirectExportBitmap(ActiveDocument, ci, cropOverride, true))
+                    {
+                        SlitScanEngine.SaveBitmapToFile(bmp, sfd.FileName, LynxExtendedConfig.Instance.ImageExportJpegQuality);
+                    }
+                    SetHelp("Exported cropped image: " + sfd.FileName);
+                }
+            }
+        }
+
+        private void ExportVideoDialog()
+        {
+            if (ActiveDocument == null) return;
+            int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
+            CropWindow cropOverride = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Filter = "Motion-JPEG Video (*.avi)|*.avi";
+                sfd.FileName = ActiveDocument.GetEventCodeString() + ".avi";
+                if (sfd.ShowDialog(this) == DialogResult.OK)
+                {
+                    SlitScanEngine.ExportVideoSequence(ActiveDocument, ci, cropOverride, sfd.FileName);
+                    SetHelp("Exported AVI video sequence: " + sfd.FileName);
+                }
+            }
+        }
+
+        private static void SavePrintDialogOptions(PrintDialogSettings chosen)
+        {
+            if (chosen == null) return;
+            PrintDialogSettings cfg = LynxExtendedConfig.Instance.PrintDialogOptions;
+            cfg.Zoom = chosen.Zoom;
+            cfg.Smooth = chosen.Smooth;
+            cfg.Dpi = chosen.Dpi;
+            cfg.ImageHeight = chosen.ImageHeight;
+            cfg.UseCentimeters = chosen.UseCentimeters;
+            cfg.LaneBarsOn = chosen.LaneBarsOn;
+            cfg.LimitResOn = chosen.LimitResOn;
+            cfg.LimitResValue = chosen.LimitResValue;
+            cfg.PrintResultsOn = chosen.PrintResultsOn;
+            cfg.MaxResults = chosen.MaxResults;
+            cfg.ResultsRange = chosen.ResultsRange;
+            LynxExtendedConfig.Instance.Save();
+        }
+
         private void ExportAnnotatedImageDialog()
         {
             if (ActiveDocument == null) return;
             int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
-            using (SaveFileDialog sfd = new SaveFileDialog())
+            CropWindow cropOverride = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
+            using (LynxPrintDialog pdlg = new LynxPrintDialog(ActiveDocument, ci, cropOverride, LynxExtendedConfig.Instance.PrintDialogOptions))
             {
-                sfd.Filter = "PNG Official Image (*.png)|*.png|JPEG Image (*.jpg)|*.jpg";
-                sfd.FileName = ActiveDocument.GetEventCodeString() + "_PhotoFinish.png";
-                if (sfd.ShowDialog(this) == DialogResult.OK)
+                if (pdlg.ShowDialog(this) != DialogResult.OK) return;
+                SavePrintDialogOptions(pdlg.Settings);
+                using (SaveFileDialog sfd = new SaveFileDialog())
                 {
-                    using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(ActiveDocument, ci))
+                    sfd.Filter = "PNG Official Image (*.png)|*.png|JPEG Image (*.jpg)|*.jpg|Windows Bitmap (*.bmp)|*.bmp|Targa Image (*.tga)|*.tga";
+                    sfd.FileName = ActiveDocument.GetEventCodeString() + "_PhotoFinish.png";
+                    if (sfd.ShowDialog(this) == DialogResult.OK)
                     {
-                        bmp.Save(sfd.FileName);
+                        using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(ActiveDocument, ci, cropOverride, pdlg.Settings))
+                        {
+                            SlitScanEngine.SaveBitmapToFile(bmp, sfd.FileName, LynxExtendedConfig.Instance.ImageExportJpegQuality);
+                        }
+                        SetHelp("Saved annotated bitmap: " + sfd.FileName);
                     }
-                    SetHelp("Exported annotated image: " + sfd.FileName);
                 }
             }
         }
@@ -1725,19 +1922,344 @@ namespace OptiFinish
         {
             if (ActiveDocument == null) return;
             int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
+            CropWindow cropOverride = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
+            using (LynxPrintDialog pdlg = new LynxPrintDialog(ActiveDocument, ci, cropOverride, LynxExtendedConfig.Instance.PrintDialogOptions))
+            {
+                if (pdlg.ShowDialog(this) != DialogResult.OK) return;
+                SavePrintDialogOptions(pdlg.Settings);
+                PrintDialogSettings printOpts = pdlg.Settings.Clone();
+                using (PrintPreviewDialog ppd = new PrintPreviewDialog())
+                using (System.Drawing.Printing.PrintDocument pd = new System.Drawing.Printing.PrintDocument())
+                {
+                    pd.DefaultPageSettings.Landscape = LynxExtendedConfig.Instance.PrintSettings.Landscape;
+                    pd.PrintPage += delegate(object s, System.Drawing.Printing.PrintPageEventArgs pe)
+                    {
+                        using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(ActiveDocument, ci, cropOverride, printOpts))
+                        {
+                            Rectangle bounds = pe.MarginBounds;
+                            double sx = (double)bounds.Width / Math.Max(1, bmp.Width);
+                            double sy = (double)bounds.Height / Math.Max(1, bmp.Height);
+                            double sc = Math.Min(sx, sy);
+                            int dw = Math.Max(1, (int)Math.Round(bmp.Width * sc));
+                            int dh = Math.Max(1, (int)Math.Round(bmp.Height * sc));
+                            int dx = bounds.X + (bounds.Width - dw) / 2;
+                            int dy = bounds.Y + (bounds.Height - dh) / 2;
+                            pe.Graphics.InterpolationMode = printOpts.Smooth
+                                ? System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
+                                : System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                            pe.Graphics.DrawImage(bmp, new Rectangle(dx, dy, dw, dh));
+                        }
+                    };
+                    ppd.Document = pd;
+                    ppd.Width = 980;
+                    ppd.Height = 680;
+                    ppd.ShowDialog(this);
+                }
+            }
+        }
+
+        private void CreateNewProfileFlow()
+        {
+            using (CreateProfileDialog d = new CreateProfileDialog())
+            {
+                if (d.ShowDialog(this) == DialogResult.OK && !string.IsNullOrWhiteSpace(d.ProfileName))
+                {
+                    if (!LynxExtendedConfig.Instance.SavedProfiles.Contains(d.ProfileName))
+                    {
+                        LynxExtendedConfig.Instance.SavedProfiles.Add(d.ProfileName);
+                    }
+                    LynxExtendedConfig.Instance.Save();
+                    string profDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Profiles");
+                    if (!Directory.Exists(profDir)) Directory.CreateDirectory(profDir);
+                    string iniSrc = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OptiFinish.cfg");
+                    if (File.Exists(iniSrc))
+                    {
+                        string safeName = string.Join("_", d.ProfileName.Split(Path.GetInvalidFileNameChars()));
+                        File.Copy(iniSrc, Path.Combine(profDir, safeName + ".cfg"), true);
+                    }
+                    SetHelp("Created profile: " + d.ProfileName);
+                }
+            }
+        }
+
+        private void PerformActiveUndo()
+        {
+            if (ActiveEventControl != null && ActiveDocument != null && ActiveDocument.UndoActions != null && ActiveDocument.UndoActions.Count > 0)
+            {
+                ActiveEventControl.PerformUndo();
+                UpdateTitleAndStatus();
+                return;
+            }
+            SendKeys.Send("^z");
+        }
+
+        private void OpenSelectStartDialog()
+        {
+            if (ActiveDocument == null) return;
+            using (SelectStartDialog d = new SelectStartDialog(ActiveDocument))
+            {
+                if (d.ShowDialog(this) == DialogResult.OK)
+                {
+                    ActiveDocument.SelectedStartIndex = d.SelectedStartIndex;
+                    ActiveDocument.StartOffsetSeconds = d.SelectedOffsetSeconds;
+                    ActiveDocument.HasStartSignal = true;
+                    if (ActiveEventControl != null) ActiveEventControl.RefreshAll();
+                    UpdateTitleAndStatus();
+                    SetHelp("Selected start #" + (d.SelectedStartIndex + 1) + " @ " + d.SelectedOffsetSeconds.ToString("0.000", CultureInfo.InvariantCulture) + "s");
+                }
+            }
+        }
+
+        private void OpenTodStartDialog()
+        {
+            if (ActiveDocument == null) return;
+            using (TodStartDialog d = new TodStartDialog(ActiveDocument.StartOffsetSeconds))
+            {
+                if (d.ShowDialog(this) == DialogResult.OK)
+                {
+                    ActiveDocument.StartOffsetSeconds = d.SelectedStartTimeSeconds;
+                    ActiveDocument.HasStartSignal = true;
+                    ActiveDocument.RecordedStarts.Add(new TimeTrialStartEntry
+                    {
+                        StartNumber = ActiveDocument.RecordedStarts.Count + 1,
+                        Label = "TOD Start " + d.RawTimeText,
+                        OffsetSeconds = d.SelectedStartTimeSeconds
+                    });
+                    if (ActiveEventControl != null) ActiveEventControl.RefreshAll();
+                    SetHelp("Applied TOD Start: " + d.RawTimeText);
+                }
+            }
+        }
+
+        private void OpenSynchronizeTodDialog()
+        {
+            if (ActiveDocument == null) return;
+            double imgSec = (ActiveEventControl != null && ActiveEventControl.ActiveViewport != null) ? ActiveEventControl.ActiveViewport.CursorTimeSeconds : 0.0;
+            using (SynchronizeTodDialog d = new SynchronizeTodDialog(ActiveDocument.StartOffsetSeconds, imgSec, ActiveDocument.StartOffsetSeconds))
+            {
+                if (d.ShowDialog(this) == DialogResult.OK)
+                {
+                    double delta = d.NewTodOffsetSeconds - ActiveDocument.StartOffsetSeconds;
+                    ActiveDocument.StartOffsetSeconds = d.NewTodOffsetSeconds;
+                    if (d.MakeEventValid) ActiveDocument.HasStartSignal = true;
+                    for (int i = 0; i < ActiveDocument.Cameras.Count; i++)
+                    {
+                        ActiveDocument.Cameras[i].CaptureStartSeconds += delta;
+                    }
+                    if (ActiveEventControl != null) ActiveEventControl.RefreshAll();
+                    UpdateTitleAndStatus();
+                    SetHelp("Synchronized TOD offset by " + delta.ToString("0.000", CultureInfo.InvariantCulture) + "s");
+                }
+            }
+        }
+
+        private void SetCaptureLegFlow()
+        {
+            if (ActiveDocument == null || ActiveDocument.SplitLocations == null || ActiveDocument.SplitLocations.Count == 0)
+            {
+                AddSplitLocationFlow();
+                return;
+            }
+            string cur = ActiveDocument.ActiveCaptureSplitIndex.ToString(CultureInfo.InvariantCulture);
+            using (SimplePromptDialog d = new SimplePromptDialog("Set Capture Split", "Active split index (0.." + (ActiveDocument.SplitLocations.Count - 1) + "):", cur))
+            {
+                int idx;
+                if (d.ShowDialog(this) == DialogResult.OK && int.TryParse(d.ValueText, out idx))
+                {
+                    ActiveDocument.ActiveCaptureSplitIndex = Math.Max(0, Math.Min(ActiveDocument.SplitLocations.Count - 1, idx));
+                    if (ActiveEventControl != null) ActiveEventControl.RefreshInformationGrid();
+                    SetHelp("Set capture split to index " + ActiveDocument.ActiveCaptureSplitIndex);
+                }
+            }
+        }
+
+        private void AddCameraToEventFlow()
+        {
+            if (ActiveDocument == null) return;
+            int idx = ActiveDocument.Cameras.Count + 1;
+            SlitCameraStream baseCam = ActiveDocument.Cameras.Count > 0 ? ActiveDocument.Cameras[0] : null;
+            int w = (baseCam != null && baseCam.RawStripBitmap != null) ? baseCam.RawStripBitmap.Width : 2400;
+            int h = (baseCam != null && baseCam.RawStripBitmap != null) ? baseCam.RawStripBitmap.Height : 480;
+            Bitmap bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            if (baseCam != null && baseCam.RawStripBitmap != null)
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.DrawImage(baseCam.RawStripBitmap, 0, 0, w, h);
+                }
+            }
+            SlitCameraStream cam = new SlitCameraStream
+            {
+                CameraId = "CAM-" + idx,
+                DisplayName = "Camera " + idx + " (Opposite / Secondary)",
+                SampleRateHz = baseCam != null ? baseCam.SampleRateHz : 2000,
+                Orientation = baseCam != null && baseCam.Orientation == StripOrientation.LeftToRight ? StripOrientation.RightToLeft : StripOrientation.LeftToRight,
+                CaptureStartSeconds = baseCam != null ? baseCam.CaptureStartSeconds : 0.0,
+                FrameHeightPx = h,
+                RawStripBitmap = bmp,
+                IsEnabled = true
+            };
+            SlitScanEngine.ComputeMotionEnergyProfile(cam);
+            SlitScanEngine.UpdateDisplayBitmap(cam);
+            ActiveDocument.Cameras.Add(cam);
+            if (ActiveEventControl != null)
+            {
+                ActiveEventControl.LoadDocument(ActiveDocument);
+                ActiveEventControl.RefreshAll();
+            }
+            SetHelp("Added Camera " + idx + " to event.");
+        }
+
+        private void EditImageCalibrationSetting(int mode)
+        {
+            if (ActiveDocument == null || ActiveDocument.Cameras.Count == 0) return;
+            int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
+            if (ci < 0 || ci >= ActiveDocument.Cameras.Count) ci = 0;
+            SlitCameraStream cam = ActiveDocument.Cameras[ci];
+            CameraSettingsProfile prof = cam.Profile ?? new CameraSettingsProfile();
+            cam.Profile = prof;
+
+            string title = "Set Calibration";
+            string label = "Value:";
+            string init = "0";
+            if (mode == 0) { title = "Object Threshold"; label = "Object Balance / Threshold (0..255):"; init = prof.ObjectThreshold.ToString(CultureInfo.InvariantCulture); }
+            else if (mode == 1) { title = "Object Active Area"; label = "Top,Bottom pixels (e.g. 20,460):"; init = prof.ObjectActiveTop + "," + prof.ObjectActiveBottom; }
+            else if (mode == 2) { title = "PhotoEye Threshold"; label = "PhotoEye Threshold (0..255):"; init = prof.PhotoEyeThreshold.ToString(CultureInfo.InvariantCulture); }
+            else if (mode == 3) { title = "PhotoEye Active Area"; label = "Top,Bottom pixels (e.g. 100,380):"; init = prof.PhotoEyeActiveTop + "," + prof.PhotoEyeActiveBottom; }
+            else if (mode == 4) { title = "Capture Area"; label = "Leader,Trailer columns (e.g. 35,35):"; init = prof.LeaderCols + "," + prof.TrailerCols; }
+            else if (mode == 5) { title = "Length Time"; label = "Length time unit (seconds):"; init = ActiveDocument.LengthUnitSeconds.ToString("0.000", CultureInfo.InvariantCulture); }
+
+            using (SimplePromptDialog d = new SimplePromptDialog(title, label, init))
+            {
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                string v = (d.ValueText ?? "").Trim();
+                int a, b;
+                double dv;
+                string[] parts = v.Split(new char[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (mode == 0 && int.TryParse(v, out a)) prof.ObjectThreshold = Math.Max(0, Math.Min(255, a));
+                else if (mode == 1 && parts.Length >= 2 && int.TryParse(parts[0], out a) && int.TryParse(parts[1], out b)) { prof.ObjectActiveTop = a; prof.ObjectActiveBottom = b; }
+                else if (mode == 2 && int.TryParse(v, out a)) prof.PhotoEyeThreshold = Math.Max(0, Math.Min(255, a));
+                else if (mode == 3 && parts.Length >= 2 && int.TryParse(parts[0], out a) && int.TryParse(parts[1], out b)) { prof.PhotoEyeActiveTop = a; prof.PhotoEyeActiveBottom = b; }
+                else if (mode == 4 && parts.Length >= 2 && int.TryParse(parts[0], out a) && int.TryParse(parts[1], out b)) { prof.LeaderCols = Math.Max(0, a); prof.TrailerCols = Math.Max(0, b); }
+                else if (mode == 5 && double.TryParse(v.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out dv))
+                {
+                    prof.LengthTimeSeconds = Math.Max(0.01, dv);
+                    ActiveDocument.LengthUnitSeconds = Math.Max(0.01, dv);
+                }
+                if (ActiveEventControl != null) ActiveEventControl.InvalidateViewports();
+                SetHelp("Updated " + title + ".");
+            }
+        }
+
+        private void EditEventNameOverlayFlow()
+        {
+            if (ActiveDocument == null) return;
+            using (SimplePromptDialog d = new SimplePromptDialog("Event Name Overlay", "Header event name:", ActiveDocument.EventName))
+            {
+                if (d.ShowDialog(this) == DialogResult.OK && !string.IsNullOrWhiteSpace(d.ValueText))
+                {
+                    ActiveDocument.EventName = d.ValueText.Trim();
+                    ActiveDocument.ShowEventNameOverlay = true;
+                    if (ActiveEventControl != null) ActiveEventControl.RefreshAll();
+                    UpdateTitleAndStatus();
+                }
+            }
+        }
+
+        private void TogglePhotoEyesScoreboard()
+        {
+            if (ActiveDocument == null) return;
+            if (ActiveDocument.Cameras.Count > 0 && ActiveDocument.Cameras[0].Profile != null)
+            {
+                ActiveDocument.Cameras[0].Profile.CapturePhotoEyeA = !ActiveDocument.Cameras[0].Profile.CapturePhotoEyeA;
+                SetHelp("Photo eyes scoreboard sync: " + (ActiveDocument.Cameras[0].Profile.CapturePhotoEyeA ? "ON" : "OFF"));
+            }
+        }
+
+        private void SendCroppedImageToScoreboard(bool remoteResulTv)
+        {
+            if (ActiveDocument == null) return;
+            int ci = ActiveEventControl != null ? ActiveEventControl.ActiveCameraIndex : 0;
+            CropWindow crop = ActiveEventControl != null ? ActiveEventControl.GetActiveExportCrop() : null;
+            string outDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ScoreboardOut");
+            if (!Directory.Exists(outDir)) Directory.CreateDirectory(outDir);
+            string fileName = (remoteResulTv ? "ResulTV_" : "VDM_") + ActiveDocument.GetEventCodeString() + ".png";
+            string fullPath = Path.Combine(outDir, fileName);
+            using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(ActiveDocument, ci, crop, LynxExtendedConfig.Instance.PrintDialogOptions))
+            {
+                SlitScanEngine.SaveBitmapToFile(bmp, fullPath, LynxExtendedConfig.Instance.ImageExportJpegQuality);
+            }
+            if (_hardware != null) _hardware.TransmitOfficialResults(ActiveDocument);
+            SetHelp("Sent cropped image (" + (remoteResulTv ? "ResulTV" : "VDM") + "): " + fullPath);
+        }
+
+        private void OverrideScoreboardTodFlow()
+        {
+            using (TodStartDialog d = new TodStartDialog(DateTime.Now.TimeOfDay.TotalSeconds))
+            {
+                if (d.ShowDialog(this) == DialogResult.OK)
+                {
+                    _clockShowTod = true;
+                    if (_mnuScbTod != null) _mnuScbTod.Checked = true;
+                    UpdateClockText();
+                    if (_hardware != null) _hardware.TransmitRunningTime(d.SelectedStartTimeSeconds, "");
+                    SetHelp("Overrode scoreboard time of day: " + d.RawTimeText);
+                }
+            }
+        }
+
+        private void EditSplitKeysFlow()
+        {
+            if (ActiveDocument == null) return;
+            using (LapTimeSplitKeysDialog d = new LapTimeSplitKeysDialog(ActiveDocument.LapTimeSplitKeyMap))
+            {
+                if (d.ShowDialog(this) == DialogResult.OK)
+                {
+                    SetHelp("Updated LapTime split keys (" + ActiveDocument.LapTimeSplitKeyMap.Count + " bindings).");
+                }
+            }
+        }
+
+        private void ClearActiveLapTimeSplits()
+        {
+            if (ActiveDocument == null) return;
+            for (int i = 0; i < ActiveDocument.Competitors.Count; i++)
+            {
+                ActiveDocument.Competitors[i].Splits.Clear();
+            }
+            if (ActiveEventControl != null) ActiveEventControl.RefreshResultsGrid();
+            SetHelp("Cleared all athlete lap/split records for event.");
+        }
+
+        private void PrintSplitTimesFlow()
+        {
+            if (ActiveDocument == null) return;
+            StringBuilder sb = new StringBuilder();
+            sb.AppendFormat(CultureInfo.InvariantCulture, "SPLIT TIMES: {0} ({1})\r\n\r\n", ActiveDocument.EventName, ActiveDocument.GetEventCodeString());
+            for (int i = 0; i < ActiveDocument.Competitors.Count; i++)
+            {
+                CompetitorEntry c = ActiveDocument.Competitors[i];
+                sb.AppendFormat(CultureInfo.InvariantCulture, "Ln {0} #{1} {2}: Official={3} | ", c.Lane, c.BibId, ((c.FirstName ?? "") + " " + (c.LastName ?? "")).Trim(), c.GetFormattedOfficialTime(ActiveDocument.Precision));
+                for (int s = 0; s < c.Splits.Count; s++)
+                {
+                    sb.AppendFormat(CultureInfo.InvariantCulture, "[L{0}:{1}] ", c.Splits[s].LapNumber, CompetitorEntry.FormatSeconds(c.Splits[s].CumulativeSeconds, ActiveDocument.Precision));
+                }
+                sb.AppendLine();
+            }
+            string summary = sb.ToString();
             using (PrintPreviewDialog ppd = new PrintPreviewDialog())
             using (System.Drawing.Printing.PrintDocument pd = new System.Drawing.Printing.PrintDocument())
             {
-                pd.DefaultPageSettings.Landscape = LynxExtendedConfig.Instance.PrintSettings.Landscape;
                 pd.PrintPage += delegate(object s, System.Drawing.Printing.PrintPageEventArgs pe)
                 {
-                    using (Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(ActiveDocument, ci))
+                    using (Font f = new Font("Consolas", 9.5f))
                     {
-                        pe.Graphics.DrawImage(bmp, pe.MarginBounds);
+                        pe.Graphics.DrawString(summary, f, Brushes.Black, pe.MarginBounds);
                     }
                 };
                 ppd.Document = pd;
-                ppd.Width = 980; ppd.Height = 680;
+                ppd.Width = 780;
+                ppd.Height = 560;
                 ppd.ShowDialog(this);
             }
         }

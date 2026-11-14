@@ -945,8 +945,12 @@ namespace OptiFinish.Core
             sb.AppendLine("HAS_WIND=" + (doc.HasWindReading ? "1" : "0"));
             sb.AppendLine("PRECISION=" + ((int)doc.Precision).ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("LANE_COUNT=" + doc.LaneCount.ToString(CultureInfo.InvariantCulture));
+            sb.AppendLine("HAS_START=" + (doc.HasStartSignal ? "1" : "0"));
+            sb.AppendLine("START_OFFSET=" + doc.StartOffsetSeconds.ToString("0.0000", CultureInfo.InvariantCulture));
+            sb.AppendLine("SHOW_EVENT_OVERLAY=" + (doc.ShowEventNameOverlay ? "1" : "0"));
 
             string baseDir = Path.GetDirectoryName(filePath);
+            if (string.IsNullOrEmpty(baseDir)) baseDir = ".";
             string baseName = Path.GetFileNameWithoutExtension(filePath);
 
             for (int i = 0; i < doc.Cameras.Count; i++)
@@ -956,10 +960,28 @@ namespace OptiFinish.Core
                 string pngPath = Path.Combine(baseDir, pngName);
                 if (cam.RawStripBitmap != null)
                 {
-                    cam.RawStripBitmap.Save(pngPath, ImageFormat.Png);
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        cam.RawStripBitmap.Save(ms, ImageFormat.Png);
+                        File.WriteAllBytes(pngPath, ms.ToArray());
+                    }
                 }
                 sb.AppendFormat(CultureInfo.InvariantCulture, "CAMERA={0}|{1}|{2}|{3}|{4:0.0000}|{5}",
                     cam.CameraId, cam.DisplayName, cam.SampleRateHz, (int)cam.Orientation, cam.CaptureStartSeconds, pngName);
+                sb.AppendLine();
+
+                if (cam.ActiveCrop != null)
+                {
+                    sb.AppendFormat(CultureInfo.InvariantCulture, "CAMERA_CROP={0}|{1}|{2:0.0000}|{3:0.0000}",
+                        cam.ActiveCrop.StartCol, cam.ActiveCrop.EndCol, cam.ActiveCrop.TopRatio, cam.ActiveCrop.BottomRatio);
+                    sb.AppendLine();
+                }
+
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "CAMERA_ADJ={0}|{1}|{2:0.000}|{3:0.000}|{4}|{5}|{6}|{7}|{8}|{9}",
+                    cam.BrightnessOffset, cam.ContrastOffset, cam.GammaValue, cam.VerticalStretch,
+                    cam.BlackLevel, cam.WhiteBalanceRed, cam.WhiteBalanceGreen, cam.WhiteBalanceBlue,
+                    cam.EnhanceEnabled ? 1 : 0, cam.ReverseLaneOrder ? 1 : 0);
                 sb.AppendLine();
             }
 
@@ -967,16 +989,244 @@ namespace OptiFinish.Core
             {
                 CompetitorEntry c = doc.Competitors[i];
                 sb.AppendFormat(CultureInfo.InvariantCulture,
-                    "COMPETITOR={0}|{1}|{2}|{3}|{4}|{5:0.00000}|{6:0.0000}|{7}|{8:0.0000}",
+                    "COMPETITOR={0}|{1}|{2}|{3}|{4}|{5:0.00000}|{6:0.0000}|{7}|{8:0.0000}|{9}|{10:0.00000}|{11}",
                     c.Lane, c.BibId, c.LastName, c.FirstName, c.Affiliation,
                     double.IsNaN(c.RawTimeSeconds) ? -1.0 : c.RawTimeSeconds,
                     double.IsNaN(c.ReactionTimeSeconds) ? -1.0 : c.ReactionTimeSeconds,
                     (int)c.Status,
-                    c.EvaluatedVerticalRatio);
+                    c.EvaluatedVerticalRatio,
+                    c.HasImageEvaluation ? 1 : 0,
+                    double.IsNaN(c.EvaluatedTimeSeconds) ? -1.0 : c.EvaluatedTimeSeconds,
+                    c.EvaluatedCameraIndex);
+                sb.AppendLine();
+            }
+
+            for (int i = 0; i < doc.Overlays.Count; i++)
+            {
+                ImageOverlayItem ov = doc.Overlays[i];
+                if (ov == null) continue;
+                string safeText = (ov.Text ?? "").Replace("\r", "").Replace("\n", "\\n").Replace("|", "/");
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "OVERLAY={0}|{1:0.00000}|{2:0.0000}|{3}|{4}|{5}|{6:0.0}|{7}|{8}|{9}|{10}",
+                    ov.GroupIndex, ov.TimeSeconds, ov.VerticalRatio, ov.OverlayColor.ToArgb(),
+                    ov.Visible ? 1 : 0, ov.FontName ?? "Segoe UI", ov.FontSizePt,
+                    ov.FontBold ? 1 : 0, ov.ShowLine ? 1 : 0, ov.ShowSplits ? 1 : 0, safeText);
                 sb.AppendLine();
             }
 
             File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
+        }
+
+        /// <summary>
+        /// Loads an OptiFinish native clean-room race package (.optr + camera .png files),
+        /// restoring ActiveCrop, image adjustments, overlays, and competitor evaluations.
+        /// </summary>
+        public static RaceEventDocument LoadNativeRacePackage(string filePath)
+        {
+            RaceEventDocument doc = new RaceEventDocument
+            {
+                SourceFilePath = filePath
+            };
+            doc.Competitors.Clear();
+            doc.Cameras.Clear();
+            doc.Overlays.Clear();
+
+            string baseDir = Path.GetDirectoryName(filePath);
+            if (string.IsNullOrEmpty(baseDir)) baseDir = ".";
+
+            string[] lines = File.ReadAllLines(filePath, Encoding.UTF8);
+            SlitCameraStream lastCam = null;
+
+            for (int li = 0; li < lines.Length; li++)
+            {
+                string raw = (lines[li] ?? "").Trim();
+                if (raw.Length == 0 || raw.StartsWith("#")) continue;
+                int eq = raw.IndexOf('=');
+                if (eq <= 0) continue;
+                string key = raw.Substring(0, eq).Trim().ToUpperInvariant();
+                string val = raw.Substring(eq + 1);
+
+                if (key == "EVENT_NUMBER") { int n; if (int.TryParse(val, out n)) doc.EventNumber = n; }
+                else if (key == "ROUND_NUMBER") { int n; if (int.TryParse(val, out n)) doc.RoundNumber = n; }
+                else if (key == "HEAT_NUMBER") { int n; if (int.TryParse(val, out n)) doc.HeatNumber = n; }
+                else if (key == "EVENT_NAME") { doc.EventName = val; }
+                else if (key == "DISTANCE_METERS") { double d; if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) doc.DistanceMeters = d; }
+                else if (key == "COMPETITION") { doc.CompetitionName = val; }
+                else if (key == "WIND_READING") { double w; if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out w)) doc.WindReading = w; }
+                else if (key == "HAS_WIND") { doc.HasWindReading = (val == "1"); }
+                else if (key == "PRECISION") { int p; if (int.TryParse(val, out p) && Enum.IsDefined(typeof(TimePrecision), p)) doc.Precision = (TimePrecision)p; }
+                else if (key == "LANE_COUNT") { int lc; if (int.TryParse(val, out lc) && lc > 0) doc.LaneCount = lc; }
+                else if (key == "HAS_START") { doc.HasStartSignal = (val == "1"); }
+                else if (key == "START_OFFSET") { double so; if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out so)) doc.StartOffsetSeconds = so; }
+                else if (key == "SHOW_EVENT_OVERLAY") { doc.ShowEventNameOverlay = (val == "1"); }
+                else if (key == "CAMERA")
+                {
+                    string[] parts = val.Split('|');
+                    if (parts.Length >= 6)
+                    {
+                        int rate = 2000;
+                        int.TryParse(parts[2], out rate);
+                        int orient = 0;
+                        int.TryParse(parts[3], out orient);
+                        double capStart = 0;
+                        double.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out capStart);
+                        string pngPath = Path.IsPathRooted(parts[5]) ? parts[5] : Path.Combine(baseDir, parts[5]);
+                        Bitmap rawBmp = null;
+                        if (File.Exists(pngPath))
+                        {
+                            using (FileStream fs = new FileStream(pngPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                            using (Image img = Image.FromStream(fs))
+                            {
+                                rawBmp = new Bitmap(img.Width, img.Height, PixelFormat.Format24bppRgb);
+                                using (Graphics g = Graphics.FromImage(rawBmp))
+                                {
+                                    g.DrawImage(img, 0, 0, img.Width, img.Height);
+                                }
+                            }
+                        }
+                        if (rawBmp == null)
+                        {
+                            rawBmp = new Bitmap(2000, 480, PixelFormat.Format24bppRgb);
+                        }
+                        lastCam = new SlitCameraStream
+                        {
+                            CameraId = parts[0],
+                            DisplayName = parts[1],
+                            SampleRateHz = Math.Max(100, rate),
+                            Orientation = Enum.IsDefined(typeof(StripOrientation), orient) ? (StripOrientation)orient : StripOrientation.LeftToRight,
+                            CaptureStartSeconds = capStart,
+                            FrameHeightPx = rawBmp.Height,
+                            RawStripBitmap = rawBmp,
+                            SourceFilePath = pngPath,
+                            IsEnabled = true
+                        };
+                        doc.Cameras.Add(lastCam);
+                    }
+                }
+                else if (key == "CAMERA_CROP" && lastCam != null)
+                {
+                    string[] parts = val.Split('|');
+                    if (parts.Length >= 4)
+                    {
+                        int sc, ec;
+                        float tr, br;
+                        if (int.TryParse(parts[0], out sc) && int.TryParse(parts[1], out ec) &&
+                            float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out tr) &&
+                            float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out br))
+                        {
+                            lastCam.ActiveCrop = new CropWindow(sc, ec, tr, br);
+                        }
+                    }
+                }
+                else if (key == "CAMERA_ADJ" && lastCam != null)
+                {
+                    string[] parts = val.Split('|');
+                    if (parts.Length >= 4)
+                    {
+                        int iv;
+                        double dv;
+                        if (int.TryParse(parts[0], out iv)) lastCam.BrightnessOffset = iv;
+                        if (int.TryParse(parts[1], out iv)) lastCam.ContrastOffset = iv;
+                        if (double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out dv)) lastCam.GammaValue = dv;
+                        if (double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out dv)) lastCam.VerticalStretch = dv;
+                        if (parts.Length >= 5 && int.TryParse(parts[4], out iv)) lastCam.BlackLevel = iv;
+                        if (parts.Length >= 6 && int.TryParse(parts[5], out iv)) lastCam.WhiteBalanceRed = iv;
+                        if (parts.Length >= 7 && int.TryParse(parts[6], out iv)) lastCam.WhiteBalanceGreen = iv;
+                        if (parts.Length >= 8 && int.TryParse(parts[7], out iv)) lastCam.WhiteBalanceBlue = iv;
+                        if (parts.Length >= 9) lastCam.EnhanceEnabled = (parts[8] == "1");
+                        if (parts.Length >= 10) lastCam.ReverseLaneOrder = (parts[9] == "1");
+                    }
+                }
+                else if (key == "COMPETITOR")
+                {
+                    string[] parts = val.Split('|');
+                    if (parts.Length >= 9)
+                    {
+                        int lane = 1, st = 0;
+                        double rawT = -1.0, reac = -1.0;
+                        float vr = 0.5f;
+                        int.TryParse(parts[0], out lane);
+                        double.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out rawT);
+                        double.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out reac);
+                        int.TryParse(parts[7], out st);
+                        float.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out vr);
+
+                        CompetitorEntry c = new CompetitorEntry
+                        {
+                            Lane = lane,
+                            BibId = parts[1],
+                            LastName = parts[2],
+                            FirstName = parts[3],
+                            Affiliation = parts[4],
+                            RawTimeSeconds = rawT >= 0 ? rawT : double.NaN,
+                            ReactionTimeSeconds = reac >= 0 ? reac : double.NaN,
+                            Status = Enum.IsDefined(typeof(CompetitorStatus), st) ? (CompetitorStatus)st : CompetitorStatus.Valid,
+                            EvaluatedVerticalRatio = vr
+                        };
+                        if (parts.Length >= 12)
+                        {
+                            double evT = -1.0;
+                            int evCam = 0;
+                            c.HasImageEvaluation = (parts[9] == "1");
+                            if (double.TryParse(parts[10], NumberStyles.Float, CultureInfo.InvariantCulture, out evT) && evT >= 0)
+                            {
+                                c.EvaluatedTimeSeconds = evT;
+                            }
+                            if (int.TryParse(parts[11], out evCam)) c.EvaluatedCameraIndex = evCam;
+                        }
+                        else if (!double.IsNaN(c.RawTimeSeconds))
+                        {
+                            c.HasImageEvaluation = true;
+                            c.EvaluatedTimeSeconds = c.RawTimeSeconds;
+                        }
+                        doc.Competitors.Add(c);
+                    }
+                }
+                else if (key == "OVERLAY")
+                {
+                    string[] parts = val.Split(new char[] { '|' }, 11);
+                    if (parts.Length >= 11)
+                    {
+                        int grp = 0, argb = Color.Yellow.ToArgb();
+                        double ts = 0;
+                        float vr = 0.5f, fsz = 10f;
+                        int.TryParse(parts[0], out grp);
+                        double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out ts);
+                        float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out vr);
+                        int.TryParse(parts[3], out argb);
+                        float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out fsz);
+                        doc.Overlays.Add(new ImageOverlayItem
+                        {
+                            GroupIndex = Math.Max(0, Math.Min(8, grp)),
+                            TimeSeconds = ts,
+                            VerticalRatio = vr,
+                            OverlayColor = Color.FromArgb(argb),
+                            Visible = (parts[4] == "1"),
+                            FontName = string.IsNullOrEmpty(parts[5]) ? "Segoe UI" : parts[5],
+                            FontSizePt = fsz > 1f ? fsz : 10f,
+                            FontBold = (parts[7] == "1"),
+                            ShowLine = (parts[8] == "1"),
+                            ShowSplits = (parts[9] == "1"),
+                            Text = parts[10].Replace("\\n", "\n")
+                        });
+                    }
+                }
+            }
+
+            if (doc.Cameras.Count == 0)
+            {
+                SlitScanEngine.BuildSynthesizedCameraStrips(doc);
+            }
+            else
+            {
+                for (int i = 0; i < doc.Cameras.Count; i++)
+                {
+                    SlitScanEngine.ComputeMotionEnergyProfile(doc.Cameras[i]);
+                    SlitScanEngine.UpdateDisplayBitmap(doc.Cameras[i]);
+                }
+            }
+            doc.RecalculatePlaces();
+            return doc;
         }
 
         public static RaceEventDocument CreateSample100mHurdlesWomen()

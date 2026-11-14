@@ -245,6 +245,9 @@ namespace OptiFinish
 
         // Print + Overlays
         public PrintExportSettings PrintSettings { get; private set; }
+        public PrintDialogSettings PrintDialogOptions { get; private set; }
+        public List<string> SavedProfiles { get; private set; }
+        public List<string> InstalledSerialNumbers { get; private set; }
         public Dictionary<string, string> OtherSettings { get; private set; }
 
         private LynxExtendedConfig()
@@ -264,11 +267,11 @@ namespace OptiFinish
                 true,  // 6: Uncrop
                 true,  // 7: Autocrop
                 true,  // 8: Find Next Object
-                false, // 9: Crop Selection
+                true,  // 9: Crop Selection
                 true,  // 10: Enhance / Unenhance
                 true,  // 11: Quick Adjust (Luminosity)
                 true,  // 12: Print
-                false, // 13: Print to Bitmap
+                true,  // 13: Print to Bitmap
                 true,  // 14: Maximize Pane / Toggle Grid
                 false, // 15: Iris controls (Open / Close / Auto)
                 true   // 16: Video frame controls (when video)
@@ -359,6 +362,20 @@ namespace OptiFinish
             LapTimeMapFile = "";
 
             PrintSettings = new PrintExportSettings();
+            PrintDialogOptions = new PrintDialogSettings();
+            SavedProfiles = new List<string>
+            {
+                "<standard>",
+                "Sprint (100m/200m)",
+                "Distance / LapTime",
+                "High Resolution Print"
+            };
+            InstalledSerialNumbers = new List<string>
+            {
+                "OPTIFINISH-ACM-PRO-0001",
+                "OPTIFINISH-LAPTIME-0002",
+                "OPTIFINISH-IDENTILYNX-0003"
+            };
             OtherSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             PopulateDefaultOtherSettings();
             Load();
@@ -485,6 +502,37 @@ namespace OptiFinish
                     }
                 }
             }
+            else if (k == "PrintDlg.Zoom" && int.TryParse(v, out iv)) PrintDialogOptions.Zoom = (iv == 1 || iv == 2 || iv == 4 || iv == 8) ? iv : 1;
+            else if (k == "PrintDlg.Smooth") PrintDialogOptions.Smooth = v == "1";
+            else if (k == "PrintDlg.Dpi" && int.TryParse(v, out iv)) PrintDialogOptions.Dpi = (iv == 300 || iv == 600 || iv == 1200) ? iv : 300;
+            else if (k == "PrintDlg.ImageHeight" && double.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out dv)) PrintDialogOptions.ImageHeight = Math.Max(0.5, dv);
+            else if (k == "PrintDlg.UseCentimeters") PrintDialogOptions.UseCentimeters = v == "1";
+            else if (k == "PrintDlg.LaneBarsOn") PrintDialogOptions.LaneBarsOn = v == "1";
+            else if (k == "PrintDlg.LimitResOn") PrintDialogOptions.LimitResOn = v == "1";
+            else if (k == "PrintDlg.LimitResValue" && int.TryParse(v, out iv)) PrintDialogOptions.LimitResValue = Math.Max(72, iv);
+            else if (k == "PrintDlg.PrintResultsOn") PrintDialogOptions.PrintResultsOn = v == "1";
+            else if (k == "PrintDlg.MaxResults" && int.TryParse(v, out iv)) PrintDialogOptions.MaxResults = Math.Max(1, iv);
+            else if (k == "PrintDlg.ResultsRange") PrintDialogOptions.ResultsRange = v;
+            else if (k == "SelectionFixedWidth" && int.TryParse(v, out iv)) SelectionFixedWidth = Math.Max(32, iv);
+            else if (k == "SelectionFixedHeight" && int.TryParse(v, out iv)) SelectionFixedHeight = Math.Max(24, iv);
+            else if (k == "ImageExportJpegQuality" && int.TryParse(v, out iv)) ImageExportJpegQuality = Math.Max(10, Math.Min(100, iv));
+            else if (k == "ImageExportScale" && int.TryParse(v, out iv)) ImageExportScale = Math.Max(10, Math.Min(400, iv));
+            else if (k == "SavedProfiles" && !string.IsNullOrEmpty(v))
+            {
+                string[] ps = v.Split('|');
+                for (int i = 0; i < ps.Length; i++)
+                {
+                    if (!string.IsNullOrWhiteSpace(ps[i]) && !SavedProfiles.Contains(ps[i])) SavedProfiles.Add(ps[i]);
+                }
+            }
+            else if (k == "InstalledSerialNumbers" && !string.IsNullOrEmpty(v))
+            {
+                string[] ss = v.Split('|');
+                for (int i = 0; i < ss.Length; i++)
+                {
+                    if (!string.IsNullOrWhiteSpace(ss[i]) && !InstalledSerialNumbers.Contains(ss[i])) InstalledSerialNumbers.Add(ss[i]);
+                }
+            }
             else if (k.StartsWith("Other."))
             {
                 OtherSettings[k.Substring(6)] = v;
@@ -524,6 +572,23 @@ namespace OptiFinish
                 sb.AppendLine("LapTimeResultKey=" + LapTimeResultKey);
                 sb.AppendLine("LapTimeCreateResults=" + (LapTimeCreateResults ? "1" : "0"));
                 sb.AppendLine("LapTimeFillInPlace=" + (LapTimeFillInPlace ? "1" : "0"));
+                sb.AppendLine("SelectionFixedWidth=" + SelectionFixedWidth.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("SelectionFixedHeight=" + SelectionFixedHeight.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("ImageExportJpegQuality=" + ImageExportJpegQuality.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("ImageExportScale=" + ImageExportScale.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("PrintDlg.Zoom=" + PrintDialogOptions.Zoom.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("PrintDlg.Smooth=" + (PrintDialogOptions.Smooth ? "1" : "0"));
+                sb.AppendLine("PrintDlg.Dpi=" + PrintDialogOptions.Dpi.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("PrintDlg.ImageHeight=" + PrintDialogOptions.ImageHeight.ToString("0.00", CultureInfo.InvariantCulture));
+                sb.AppendLine("PrintDlg.UseCentimeters=" + (PrintDialogOptions.UseCentimeters ? "1" : "0"));
+                sb.AppendLine("PrintDlg.LaneBarsOn=" + (PrintDialogOptions.LaneBarsOn ? "1" : "0"));
+                sb.AppendLine("PrintDlg.LimitResOn=" + (PrintDialogOptions.LimitResOn ? "1" : "0"));
+                sb.AppendLine("PrintDlg.LimitResValue=" + PrintDialogOptions.LimitResValue.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("PrintDlg.PrintResultsOn=" + (PrintDialogOptions.PrintResultsOn ? "1" : "0"));
+                sb.AppendLine("PrintDlg.MaxResults=" + PrintDialogOptions.MaxResults.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("PrintDlg.ResultsRange=" + (PrintDialogOptions.ResultsRange ?? ""));
+                sb.AppendLine("SavedProfiles=" + string.Join("|", SavedProfiles.ToArray()));
+                sb.AppendLine("InstalledSerialNumbers=" + string.Join("|", InstalledSerialNumbers.ToArray()));
 
                 List<string> imgFlags = new List<string>();
                 for (int i = 0; i < ImageToolbarVisible.Length; i++) imgFlags.Add(ImageToolbarVisible[i] ? "1" : "0");

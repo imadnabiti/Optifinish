@@ -1141,4 +1141,924 @@ namespace OptiFinish
             Controls.Add(hint);
         }
     }
+
+    // 13. FinishLynx-parity Print Settings & Live Cropped Preview Dialog
+    public sealed class LynxPrintDialog : Form
+    {
+        private readonly RaceEventDocument _doc;
+        private readonly int _cameraIndex;
+        private readonly CropWindow _cropOverride;
+        private readonly PrintDialogSettings _settings;
+
+        private RadioButton _rbZoom1, _rbZoom2, _rbZoom4, _rbZoom8;
+        private CheckBox _chkSmooth;
+        private RadioButton _rbDpi300, _rbDpi600, _rbDpi1200;
+        private TextBox _txtHeight;
+        private RadioButton _rbInches, _rbCm;
+        private RadioButton _rbLbOff, _rbLbOn;
+        private RadioButton _rbLrOff, _rbLrOn;
+        private TextBox _txtLimitRes;
+        private RadioButton _rbPrOff, _rbPrOn;
+        private TextBox _txtMaxResults, _txtRange;
+        private PictureBox _pbPreview;
+        private Label _lblPreviewInfo;
+        private bool _updatingControls;
+
+        public PrintDialogSettings Settings { get { return _settings; } }
+
+        public LynxPrintDialog(RaceEventDocument doc, int cameraIndex, CropWindow cropOverride, PrintDialogSettings initialSettings)
+        {
+            _doc = doc;
+            _cameraIndex = cameraIndex;
+            _cropOverride = cropOverride;
+            _settings = initialSettings != null ? initialSettings.Clone() : new PrintDialogSettings();
+
+            DlgUi.StyleClassic(this, Loc.Evt("Image\\PrintDlg\\Title", "Print"), 760, 445);
+
+            int y = 16;
+            // Zoom row
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\Zoom", "Zoom:"), 16, y + 3));
+            Panel pZoom = new Panel { Location = new Point(120, y), Size = new Size(270, 24) };
+            _rbZoom1 = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\Zoom1", "1"), Location = new Point(0, 2), AutoSize = true, Checked = (_settings.Zoom <= 1) };
+            _rbZoom2 = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\Zoom2", "2"), Location = new Point(38, 2), AutoSize = true, Checked = (_settings.Zoom == 2) };
+            _rbZoom4 = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\Zoom4", "4"), Location = new Point(76, 2), AutoSize = true, Checked = (_settings.Zoom == 4) };
+            _rbZoom8 = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\Zoom8", "8"), Location = new Point(114, 2), AutoSize = true, Checked = (_settings.Zoom >= 8) };
+            _chkSmooth = new CheckBox { Text = Loc.Evt("Image\\PrintDlg\\SmoothZoom", "Smooth"), Location = new Point(158, 2), AutoSize = true, Checked = _settings.Smooth };
+            pZoom.Controls.AddRange(new Control[] { _rbZoom1, _rbZoom2, _rbZoom4, _rbZoom8, _chkSmooth });
+            Controls.Add(pZoom);
+
+            y += 34;
+            // DPI row
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\DPI", "DPI:"), 16, y + 3));
+            Panel pDpi = new Panel { Location = new Point(120, y), Size = new Size(240, 24) };
+            _rbDpi300 = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\DPI300", "300"), Location = new Point(0, 2), AutoSize = true, Checked = (_settings.Dpi <= 300) };
+            _rbDpi600 = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\DPI600", "600"), Location = new Point(56, 2), AutoSize = true, Checked = (_settings.Dpi == 600) };
+            _rbDpi1200 = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\DPI1200", "1200"), Location = new Point(112, 2), AutoSize = true, Checked = (_settings.Dpi >= 1200) };
+            pDpi.Controls.AddRange(new Control[] { _rbDpi300, _rbDpi600, _rbDpi1200 });
+            Controls.Add(pDpi);
+
+            y += 36;
+            // Image Height row
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\ImageHeight", "Image Height:"), 16, y + 3));
+            _txtHeight = DlgUi.Tb(120, y + 3, 64, _settings.ImageHeight.ToString("0.00", CultureInfo.InvariantCulture));
+            Panel pUnit = new Panel { Location = new Point(192, y), Size = new Size(190, 24) };
+            _rbInches = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\Inches", "Inches"), Location = new Point(0, 2), AutoSize = true, Checked = !_settings.UseCentimeters };
+            _rbCm = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\Centimeters", "Centimeters"), Location = new Point(72, 2), AutoSize = true, Checked = _settings.UseCentimeters };
+            pUnit.Controls.AddRange(new Control[] { _rbInches, _rbCm });
+            Controls.Add(_txtHeight);
+            Controls.Add(pUnit);
+
+            y += 36;
+            // Lane Bars row
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\LaneBars", "Lane Bars:"), 16, y + 3));
+            Panel pLb = new Panel { Location = new Point(120, y), Size = new Size(180, 24) };
+            _rbLbOff = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\LBOff", "Off"), Location = new Point(0, 2), AutoSize = true, Checked = !_settings.LaneBarsOn };
+            _rbLbOn = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\LBOn", "On"), Location = new Point(62, 2), AutoSize = true, Checked = _settings.LaneBarsOn };
+            pLb.Controls.AddRange(new Control[] { _rbLbOff, _rbLbOn });
+            Controls.Add(pLb);
+
+            y += 36;
+            // Limit Res row
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\LimitRes", "Limit Res:"), 16, y + 3));
+            Panel pLr = new Panel { Location = new Point(120, y), Size = new Size(140, 24) };
+            _rbLrOff = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\LROff", "Off"), Location = new Point(0, 2), AutoSize = true, Checked = !_settings.LimitResOn };
+            _rbLrOn = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\LROn", "On"), Location = new Point(62, 2), AutoSize = true, Checked = _settings.LimitResOn };
+            pLr.Controls.AddRange(new Control[] { _rbLrOff, _rbLrOn });
+            _txtLimitRes = DlgUi.Tb(262, y + 3, 60, _settings.LimitResValue.ToString(CultureInfo.InvariantCulture));
+            _txtLimitRes.Enabled = _settings.LimitResOn;
+            Controls.Add(pLr);
+            Controls.Add(_txtLimitRes);
+
+            y += 38;
+            // Print Results row
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\PrintResults", "Print Results:"), 16, y + 3));
+            Panel pPr = new Panel { Location = new Point(120, y), Size = new Size(180, 24) };
+            _rbPrOff = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\PROff", "Off"), Location = new Point(0, 2), AutoSize = true, Checked = !_settings.PrintResultsOn };
+            _rbPrOn = new RadioButton { Text = Loc.Evt("Image\\PrintDlg\\PROn", "On"), Location = new Point(62, 2), AutoSize = true, Checked = _settings.PrintResultsOn };
+            pPr.Controls.AddRange(new Control[] { _rbPrOff, _rbPrOn });
+            Controls.Add(pPr);
+
+            y += 34;
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\MaxResults", "Maximum"), 40, y + 3));
+            _txtMaxResults = DlgUi.Tb(120, y + 3, 56, _settings.MaxResults.ToString(CultureInfo.InvariantCulture));
+            Controls.Add(_txtMaxResults);
+
+            y += 32;
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\PrintDlg\\ResultsRange", "Range"), 40, y + 3));
+            _txtRange = DlgUi.Tb(120, y + 3, 180, _settings.ResultsRange ?? "");
+            Controls.Add(_txtRange);
+
+            // Live Cropped Thumbnail Preview on right
+            GroupBox grpPrev = new GroupBox
+            {
+                Text = "Preview",
+                Location = new Point(392, 12),
+                Size = new Size(340, 342)
+            };
+            _pbPreview = new PictureBox
+            {
+                Location = new Point(10, 20),
+                Size = new Size(320, 286),
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(24, 24, 24),
+                SizeMode = PictureBoxSizeMode.Zoom
+            };
+            _lblPreviewInfo = new Label
+            {
+                Location = new Point(10, 312),
+                Size = new Size(320, 24),
+                ForeColor = Color.FromArgb(40, 40, 40),
+                Text = ""
+            };
+            grpPrev.Controls.Add(_pbPreview);
+            grpPrev.Controls.Add(_lblPreviewInfo);
+            Controls.Add(grpPrev);
+
+            Button btnOk = DlgUi.Btn("OK", 554, 366, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 646, 366, 86, DialogResult.Cancel);
+            btnOk.Click += delegate { ReadControlsIntoSettings(); };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+
+            EventHandler onSettingChanged = delegate
+            {
+                if (_updatingControls) return;
+                SyncEnableStates();
+                ReadControlsIntoSettings();
+                UpdatePreview();
+            };
+
+            _rbZoom1.CheckedChanged += onSettingChanged;
+            _rbZoom2.CheckedChanged += onSettingChanged;
+            _rbZoom4.CheckedChanged += onSettingChanged;
+            _rbZoom8.CheckedChanged += onSettingChanged;
+            _chkSmooth.CheckedChanged += onSettingChanged;
+            _rbDpi300.CheckedChanged += onSettingChanged;
+            _rbDpi600.CheckedChanged += onSettingChanged;
+            _rbDpi1200.CheckedChanged += onSettingChanged;
+            _rbLbOff.CheckedChanged += onSettingChanged;
+            _rbLbOn.CheckedChanged += onSettingChanged;
+            _rbLrOff.CheckedChanged += onSettingChanged;
+            _rbLrOn.CheckedChanged += onSettingChanged;
+            _rbPrOff.CheckedChanged += onSettingChanged;
+            _rbPrOn.CheckedChanged += onSettingChanged;
+
+            _rbCm.CheckedChanged += delegate
+            {
+                if (_updatingControls) return;
+                _updatingControls = true;
+                double val;
+                if (double.TryParse(_txtHeight.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out val))
+                {
+                    if (_rbCm.Checked && !_settings.UseCentimeters) val *= 2.54;
+                    else if (!_rbCm.Checked && _settings.UseCentimeters) val /= 2.54;
+                    _txtHeight.Text = val.ToString("0.00", CultureInfo.InvariantCulture);
+                }
+                _updatingControls = false;
+                ReadControlsIntoSettings();
+                UpdatePreview();
+            };
+
+            _txtHeight.Leave += onSettingChanged;
+            _txtLimitRes.Leave += onSettingChanged;
+            _txtMaxResults.Leave += onSettingChanged;
+            _txtRange.Leave += onSettingChanged;
+
+            SyncEnableStates();
+            UpdatePreview();
+        }
+
+        private void SyncEnableStates()
+        {
+            _txtLimitRes.Enabled = _rbLrOn.Checked;
+            _txtMaxResults.Enabled = _rbPrOn.Checked;
+            _txtRange.Enabled = _rbPrOn.Checked;
+        }
+
+        private void ReadControlsIntoSettings()
+        {
+            _settings.Zoom = _rbZoom8.Checked ? 8 : (_rbZoom4.Checked ? 4 : (_rbZoom2.Checked ? 2 : 1));
+            _settings.Smooth = _chkSmooth.Checked;
+            _settings.Dpi = _rbDpi1200.Checked ? 1200 : (_rbDpi600.Checked ? 600 : 300);
+
+            double h;
+            if (double.TryParse(_txtHeight.Text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out h))
+            {
+                _settings.ImageHeight = Math.Max(0.25, Math.Min(100.0, h));
+            }
+            _settings.UseCentimeters = _rbCm.Checked;
+            _settings.LaneBarsOn = _rbLbOn.Checked;
+            _settings.LimitResOn = _rbLrOn.Checked;
+            int lr;
+            if (int.TryParse(_txtLimitRes.Text.Trim(), out lr)) _settings.LimitResValue = Math.Max(72, Math.Min(4800, lr));
+            _settings.PrintResultsOn = _rbPrOn.Checked;
+            int mr;
+            if (int.TryParse(_txtMaxResults.Text.Trim(), out mr)) _settings.MaxResults = Math.Max(1, Math.Min(200, mr));
+            _settings.ResultsRange = _txtRange.Text.Trim();
+        }
+
+        private void UpdatePreview()
+        {
+            if (_doc == null) return;
+            try
+            {
+                Bitmap bmp = SlitScanEngine.RenderAnnotatedExportBitmap(_doc, _cameraIndex, _cropOverride, _settings);
+                Image old = _pbPreview.Image;
+                _pbPreview.Image = bmp;
+                if (old != null) old.Dispose();
+
+                string cropSummary = "Full Strip";
+                if (_cameraIndex >= 0 && _cameraIndex < _doc.Cameras.Count)
+                {
+                    SlitCameraStream cam = _doc.Cameras[_cameraIndex];
+                    CropWindow eff = SlitScanEngine.ResolveEffectiveCrop(_doc, cam, _cropOverride);
+                    if (eff != null)
+                    {
+                        double t0 = cam.ColumnToTimeSeconds(eff.StartCol);
+                        double t1 = cam.ColumnToTimeSeconds(eff.EndCol);
+                        cropSummary = string.Format(CultureInfo.InvariantCulture, "Crop {0:0.000}s..{1:0.000}s", Math.Min(t0, t1), Math.Max(t0, t1));
+                    }
+                }
+                _lblPreviewInfo.Text = string.Format(CultureInfo.InvariantCulture, "{0} | Output: {1} x {2} px", cropSummary, bmp.Width, bmp.Height);
+            }
+            catch (Exception ex)
+            {
+                _lblPreviewInfo.Text = ex.Message;
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _pbPreview != null && _pbPreview.Image != null)
+            {
+                _pbPreview.Image.Dispose();
+                _pbPreview.Image = null;
+            }
+            base.Dispose(disposing);
+        }
+    }
+
+    // 14. Select Start Dialog (Event -> Select start...)
+    public sealed class SelectStartDialog : Form
+    {
+        private readonly RaceEventDocument _doc;
+        private readonly ListBox _lbStarts;
+        private readonly TextBox _txtTime;
+
+        public int SelectedStartIndex { get; private set; }
+        public double SelectedOffsetSeconds { get; private set; }
+
+        public SelectStartDialog(RaceEventDocument doc)
+        {
+            _doc = doc;
+            SelectedStartIndex = doc != null ? doc.SelectedStartIndex : 0;
+            SelectedOffsetSeconds = doc != null ? doc.StartOffsetSeconds : 0.0;
+
+            DlgUi.StyleClassic(this, Loc.Evt("Start\\Select\\Title", "Select Start"), 390, 290);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Start\\Select\\Title", "Select Start") + ":", 14, 14));
+            _lbStarts = new ListBox { Location = new Point(14, 34), Size = new Size(344, 140) };
+            Controls.Add(_lbStarts);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Start\\Select\\Time", "Time") + " (s):", 14, 186));
+            _txtTime = DlgUi.Tb(110, 186, 120, SelectedOffsetSeconds.ToString("0.0000", CultureInfo.InvariantCulture));
+            Controls.Add(_txtTime);
+
+            if (_doc != null && _doc.RecordedStarts.Count == 0)
+            {
+                _doc.RecordedStarts.Add(new TimeTrialStartEntry
+                {
+                    StartNumber = 1,
+                    Label = _doc.HasStartSignal ? "Primary Gun Start" : "Default Start (0.000s)",
+                    OffsetSeconds = _doc.StartOffsetSeconds
+                });
+            }
+
+            if (_doc != null)
+            {
+                for (int i = 0; i < _doc.RecordedStarts.Count; i++)
+                {
+                    TimeTrialStartEntry st = _doc.RecordedStarts[i];
+                    _lbStarts.Items.Add(string.Format(CultureInfo.InvariantCulture,
+                        "#{0}  {1}  ({2:0.0000} s)", st.StartNumber, st.Label, st.OffsetSeconds));
+                }
+                if (_lbStarts.Items.Count > 0)
+                {
+                    int idx = Math.Max(0, Math.Min(_lbStarts.Items.Count - 1, _doc.SelectedStartIndex));
+                    _lbStarts.SelectedIndex = idx;
+                }
+            }
+
+            _lbStarts.SelectedIndexChanged += delegate
+            {
+                int idx = _lbStarts.SelectedIndex;
+                if (_doc != null && idx >= 0 && idx < _doc.RecordedStarts.Count)
+                {
+                    _txtTime.Text = _doc.RecordedStarts[idx].OffsetSeconds.ToString("0.0000", CultureInfo.InvariantCulture);
+                }
+            };
+
+            Button btnOk = DlgUi.Btn("OK", 180, 218, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 272, 218, 86, DialogResult.Cancel);
+            btnOk.Click += delegate
+            {
+                int idx = Math.Max(0, _lbStarts.SelectedIndex);
+                SelectedStartIndex = idx;
+                double val;
+                if (double.TryParse(_txtTime.Text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out val))
+                {
+                    SelectedOffsetSeconds = val;
+                    if (_doc != null && idx < _doc.RecordedStarts.Count)
+                    {
+                        _doc.RecordedStarts[idx].OffsetSeconds = val;
+                    }
+                }
+            };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+        }
+    }
+
+    // 15. Time of Day Start Dialog (Event -> TOD start...)
+    public sealed class TodStartDialog : Form
+    {
+        private readonly TextBox _txtTime;
+        public double SelectedStartTimeSeconds { get; private set; }
+        public string RawTimeText { get; private set; }
+
+        public TodStartDialog(double initialOffsetSeconds)
+        {
+            DlgUi.StyleClassic(this, Loc.Hw("TODStartDlg\\Title", "Time of Day Start"), 360, 165);
+            Controls.Add(DlgUi.Lbl(Loc.Hw("TODStartDlg\\Time", "Time:"), 16, 26));
+
+            string defaultStr = FormatTodSeconds(initialOffsetSeconds > 0 ? initialOffsetSeconds : DateTime.Now.TimeOfDay.TotalSeconds);
+            _txtTime = DlgUi.Tb(90, 26, 150, defaultStr);
+            Controls.Add(_txtTime);
+
+            Button btnNow = new Button { Text = "Now", Location = new Point(248, 22), Size = new Size(80, 25) };
+            btnNow.Click += delegate { _txtTime.Text = DateTime.Now.ToString("HH:mm:ss.ff", CultureInfo.InvariantCulture); };
+            Controls.Add(btnNow);
+
+            Controls.Add(DlgUi.Lbl("Format: HH:MM:SS.fff or seconds", 90, 56));
+
+            Button btnOk = DlgUi.Btn("OK", 150, 92, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 242, 92, 86, DialogResult.Cancel);
+            btnOk.Click += delegate
+            {
+                RawTimeText = _txtTime.Text.Trim();
+                double parsed;
+                if (TryParseTodOrSeconds(RawTimeText, out parsed))
+                {
+                    SelectedStartTimeSeconds = parsed;
+                }
+            };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+        }
+
+        internal static string FormatTodSeconds(double sec)
+        {
+            if (double.IsNaN(sec) || sec < 0) sec = 0;
+            TimeSpan ts = TimeSpan.FromSeconds(sec % 86400.0);
+            return string.Format(CultureInfo.InvariantCulture, "{0:00}:{1:00}:{2:00}.{3:000}",
+                ts.Hours, ts.Minutes, ts.Seconds, ts.Milliseconds);
+        }
+
+        internal static bool TryParseTodOrSeconds(string text, out double seconds)
+        {
+            seconds = 0;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string s = text.Trim().Replace(',', '.');
+            TimeSpan ts;
+            if (TimeSpan.TryParse(s, CultureInfo.InvariantCulture, out ts))
+            {
+                seconds = ts.TotalSeconds;
+                return true;
+            }
+            double val;
+            if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out val))
+            {
+                seconds = val;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    // 16. Synchronize Time Of Day Dialog (Event -> Synchronize TOD...)
+    public sealed class SynchronizeTodDialog : Form
+    {
+        private readonly TextBox _txtOldTime;
+        private readonly TextBox _txtNewTime;
+        private readonly RadioButton _rbFromExtSync;
+        private readonly RadioButton _rbFromImage;
+        private readonly RadioButton _rbFromStart;
+        private readonly CheckBox _chkMakeValid;
+
+        public double NewTodOffsetSeconds { get; private set; }
+        public bool MakeEventValid { get; private set; }
+
+        public SynchronizeTodDialog(double oldTodSec, double imageHairlineSec, double startSec)
+        {
+            DlgUi.StyleClassic(this, Loc.Hw("SyncTODDlg\\Title", "Synchronize Time Of Day"), 410, 265);
+
+            Controls.Add(DlgUi.Lbl(Loc.Hw("SyncTODDlg\\OldTime", "Old time:"), 16, 18));
+            _txtOldTime = DlgUi.Tb(140, 18, 170, TodStartDialog.FormatTodSeconds(oldTodSec));
+            _txtOldTime.ReadOnly = true;
+            Controls.Add(_txtOldTime);
+
+            Controls.Add(DlgUi.Lbl(Loc.Hw("SyncTODDlg\\NewTime", "New time:"), 16, 48));
+            string initNew = TodStartDialog.FormatTodSeconds(DateTime.Now.TimeOfDay.TotalSeconds);
+            _txtNewTime = DlgUi.Tb(140, 48, 170, initNew);
+            Controls.Add(_txtNewTime);
+
+            _rbFromExtSync = new RadioButton { Text = Loc.Hw("SyncTODDlg\\FromExtSync", "From External Sync"), Location = new Point(22, 82), AutoSize = true, Checked = true };
+            _rbFromImage = new RadioButton { Text = Loc.Hw("SyncTODDlg\\FromImage", "From Image"), Location = new Point(22, 106), AutoSize = true };
+            _rbFromStart = new RadioButton { Text = Loc.Hw("SyncTODDlg\\FromStart", "From Start"), Location = new Point(22, 130), AutoSize = true };
+            _chkMakeValid = new CheckBox { Text = Loc.Hw("SyncTODDlg\\MakeValid", "Make the current event capturable."), Location = new Point(22, 160), AutoSize = true, Checked = true };
+
+            _rbFromExtSync.CheckedChanged += delegate { if (_rbFromExtSync.Checked) _txtNewTime.Text = TodStartDialog.FormatTodSeconds(DateTime.Now.TimeOfDay.TotalSeconds); };
+            _rbFromImage.CheckedChanged += delegate { if (_rbFromImage.Checked) _txtNewTime.Text = TodStartDialog.FormatTodSeconds(imageHairlineSec); };
+            _rbFromStart.CheckedChanged += delegate { if (_rbFromStart.Checked) _txtNewTime.Text = TodStartDialog.FormatTodSeconds(startSec); };
+
+            Label lblWarn = new Label
+            {
+                Text = Loc.Hw("SyncTODDlg\\Warning", "Warning: This will invalidate current starts and events."),
+                Location = new Point(16, 188),
+                Size = new Size(210, 34),
+                ForeColor = Color.Maroon
+            };
+
+            Controls.Add(_rbFromExtSync);
+            Controls.Add(_rbFromImage);
+            Controls.Add(_rbFromStart);
+            Controls.Add(_chkMakeValid);
+            Controls.Add(lblWarn);
+
+            Button btnOk = DlgUi.Btn("OK", 220, 192, 80, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 306, 192, 80, DialogResult.Cancel);
+            btnOk.Click += delegate
+            {
+                double v;
+                if (TodStartDialog.TryParseTodOrSeconds(_txtNewTime.Text, out v))
+                {
+                    NewTodOffsetSeconds = v;
+                }
+                MakeEventValid = _chkMakeValid.Checked;
+            };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+        }
+    }
+
+    // 17. Text Overlay Editor Dialog (Image -> Overlay -> Add/Edit text overlay)
+    public sealed class TextOverlayDialog : Form
+    {
+        private readonly TextBox _txtText;
+        private readonly ComboBox _cbFont;
+        private readonly ComboBox _cbSize;
+        private readonly CheckBox _chkBold;
+        private readonly ComboBox _cbGroup;
+        private readonly CheckBox _chkShowLine;
+        private readonly CheckBox _chkShowSplits;
+        private readonly Panel _pnlColor;
+        private readonly TextBox _txtOffsetTime;
+        private Color _chosenColor;
+
+        public ImageOverlayItem OverlayItem { get; private set; }
+
+        public TextOverlayDialog(double initialTimeSeconds, float initialVerticalRatio)
+        {
+            _chosenColor = Color.Yellow;
+            OverlayItem = new ImageOverlayItem
+            {
+                TimeSeconds = initialTimeSeconds,
+                VerticalRatio = initialVerticalRatio,
+                Visible = true,
+                OverlayColor = _chosenColor,
+                GroupIndex = 1
+            };
+
+            DlgUi.StyleClassic(this, Loc.Evt("Image\\TextOverlayDlg\\Title", "Text Overlay"), 460, 360);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\TextOverlayDlg\\Text", "Text:"), 14, 16));
+            _txtText = new TextBox
+            {
+                Location = new Point(88, 13),
+                Size = new Size(344, 62),
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                Text = "Line {TIME}"
+            };
+            Controls.Add(_txtText);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\TextOverlayDlg\\Insert", "Insert:"), 14, 86));
+            Button btnInsTime = new Button { Text = Loc.Evt("Image\\TextOverlayDlg\\LineTime", "Line Time"), Location = new Point(88, 82), Size = new Size(88, 24) };
+            Button btnInsSplit = new Button { Text = Loc.Evt("Image\\TextOverlayDlg\\SplitNum", "Split Number"), Location = new Point(180, 82), Size = new Size(92, 24) };
+            Button btnInsLap = new Button { Text = Loc.Evt("Image\\TextOverlayDlg\\LapTimer", "LapTimer Name"), Location = new Point(276, 82), Size = new Size(106, 24) };
+            Button btnInsNl = new Button { Text = Loc.Evt("Image\\TextOverlayDlg\\NewLine", "New Line"), Location = new Point(386, 82), Size = new Size(46, 24) };
+            btnInsTime.Click += delegate { _txtText.SelectedText = "{TIME}"; };
+            btnInsSplit.Click += delegate { _txtText.SelectedText = "{SPLIT}"; };
+            btnInsLap.Click += delegate { _txtText.SelectedText = "{LAPTIMER}"; };
+            btnInsNl.Click += delegate { _txtText.SelectedText = Environment.NewLine; };
+            Controls.AddRange(new Control[] { btnInsTime, btnInsSplit, btnInsLap, btnInsNl });
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\TextOverlayDlg\\Font", "Font:"), 14, 120));
+            _cbFont = DlgUi.Cb(88, 120, 148,
+                Loc.Evt("Image\\TextOverlayDlg\\FontInternal", "<internal>"),
+                "Segoe UI", "Arial", "Consolas", "Tahoma", "Times New Roman");
+            _cbFont.SelectedIndex = 1;
+            Controls.Add(_cbFont);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\TextOverlayDlg\\Size", "Size:"), 248, 120));
+            _cbSize = DlgUi.Cb(292, 120, 62, "8", "9", "10", "11", "12", "14", "16", "18", "24");
+            _cbSize.SelectedIndex = 2;
+            Controls.Add(_cbSize);
+
+            _chkBold = new CheckBox { Text = "Bold", Location = new Point(366, 118), AutoSize = true, Checked = true };
+            Controls.Add(_chkBold);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\TextOverlayDlg\\FaceColor", "Color:"), 14, 154));
+            _pnlColor = new Panel { Location = new Point(88, 150), Size = new Size(36, 22), BackColor = _chosenColor, BorderStyle = BorderStyle.FixedSingle };
+            Button btnPickColor = new Button { Text = "...", Location = new Point(128, 149), Size = new Size(34, 24) };
+            btnPickColor.Click += delegate
+            {
+                using (ColorDialog cd = new ColorDialog())
+                {
+                    cd.Color = _chosenColor;
+                    if (cd.ShowDialog(this) == DialogResult.OK)
+                    {
+                        _chosenColor = cd.Color;
+                        _pnlColor.BackColor = _chosenColor;
+                    }
+                }
+            };
+            Controls.Add(_pnlColor);
+            Controls.Add(btnPickColor);
+
+            Controls.Add(DlgUi.Lbl("Group:", 184, 154));
+            _cbGroup = DlgUi.Cb(234, 154, 120,
+                "Default", "Group 1", "Group 2", "Group 3", "Group 4",
+                "Group 5", "Group 6", "Group 7", "Group 8");
+            _cbGroup.SelectedIndex = 1;
+            Controls.Add(_cbGroup);
+
+            _chkShowLine = new CheckBox { Text = Loc.Evt("Image\\TextOverlayDlg\\LineColor", "Lines"), Location = new Point(88, 186), AutoSize = true, Checked = true };
+            _chkShowSplits = new CheckBox { Text = Loc.Evt("Image\\TextOverlayDlg\\SplitColor", "Splits"), Location = new Point(180, 186), AutoSize = true, Checked = false };
+            Controls.Add(_chkShowLine);
+            Controls.Add(_chkShowSplits);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Image\\TextOverlayDlg\\Offset", "Offset:") + " (s)", 14, 220));
+            _txtOffsetTime = DlgUi.Tb(88, 220, 110, initialTimeSeconds.ToString("0.000", CultureInfo.InvariantCulture));
+            Controls.Add(_txtOffsetTime);
+
+            Button btnOk = DlgUi.Btn("OK", 252, 280, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 346, 280, 86, DialogResult.Cancel);
+            btnOk.Click += delegate
+            {
+                double tVal = initialTimeSeconds;
+                double.TryParse(_txtOffsetTime.Text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out tVal);
+                float sz = 10f;
+                float.TryParse(_cbSize.SelectedItem != null ? _cbSize.SelectedItem.ToString() : "10", NumberStyles.Float, CultureInfo.InvariantCulture, out sz);
+                string fontName = (_cbFont.SelectedIndex <= 0) ? "Segoe UI" : _cbFont.SelectedItem.ToString();
+
+                string expanded = _txtText.Text
+                    .Replace("{TIME}", tVal.ToString("0.000", CultureInfo.InvariantCulture))
+                    .Replace("{SPLIT}", "1")
+                    .Replace("{LAPTIMER}", "LapTimer");
+
+                OverlayItem = new ImageOverlayItem
+                {
+                    GroupIndex = Math.Max(0, Math.Min(8, _cbGroup.SelectedIndex)),
+                    TimeSeconds = tVal,
+                    VerticalRatio = initialVerticalRatio,
+                    Text = expanded,
+                    OverlayColor = _chosenColor,
+                    Visible = true,
+                    FontName = fontName,
+                    FontSizePt = sz > 1f ? sz : 10f,
+                    FontBold = _chkBold.Checked,
+                    ShowLine = _chkShowLine.Checked,
+                    ShowSplits = _chkShowSplits.Checked
+                };
+            };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+        }
+    }
+
+    // 18. LapTime Split Keys Dialog (LapTime -> Edit split keys...)
+    public sealed class LapTimeSplitKeysDialog : Form
+    {
+        private readonly Dictionary<string, string> _workingMap;
+        private readonly ListBox _lbKeys;
+        private readonly TextBox _txtKey;
+        private readonly TextBox _txtInfo;
+
+        public LapTimeSplitKeysDialog(Dictionary<string, string> existingMap)
+        {
+            _workingMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (existingMap != null)
+            {
+                foreach (KeyValuePair<string, string> kv in existingMap)
+                {
+                    _workingMap[kv.Key] = kv.Value;
+                }
+            }
+            if (_workingMap.Count == 0)
+            {
+                _workingMap["F1"] = "Split 1";
+                _workingMap["F2"] = "Split 2";
+                _workingMap["Space"] = "Next Split";
+            }
+
+            DlgUi.StyleClassic(this, Loc.Evt("Results\\SplitKeysDlg\\Title", "LapTime Split Keys"), 420, 320);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Results\\SplitKeysDlg\\SplitKeys", "Split Keys:"), 14, 14));
+            _lbKeys = new ListBox { Location = new Point(14, 34), Size = new Size(376, 130) };
+            Controls.Add(_lbKeys);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Results\\SplitKeysDlg\\Key", "Key Value:"), 14, 176));
+            _txtKey = DlgUi.Tb(102, 176, 90, "");
+            Controls.Add(_txtKey);
+
+            Controls.Add(DlgUi.Lbl(Loc.Evt("Results\\SplitKeysDlg\\Info", "Splits:"), 202, 176));
+            _txtInfo = DlgUi.Tb(254, 176, 136, "");
+            Controls.Add(_txtInfo);
+
+            Button btnSet = new Button { Text = "Add / Update", Location = new Point(14, 206), Size = new Size(100, 25) };
+            Button btnDel = new Button { Text = "Remove", Location = new Point(120, 206), Size = new Size(86, 25) };
+            Controls.Add(btnSet);
+            Controls.Add(btnDel);
+
+            _lbKeys.SelectedIndexChanged += delegate
+            {
+                string line = _lbKeys.SelectedItem as string;
+                if (string.IsNullOrEmpty(line)) return;
+                int sep = line.IndexOf(" -> ", StringComparison.Ordinal);
+                if (sep > 0)
+                {
+                    _txtKey.Text = line.Substring(0, sep);
+                    _txtInfo.Text = line.Substring(sep + 4);
+                }
+            };
+
+            btnSet.Click += delegate
+            {
+                string k = _txtKey.Text.Trim();
+                if (k.Length == 0) return;
+                _workingMap[k] = _txtInfo.Text.Trim();
+                RefreshList();
+            };
+            btnDel.Click += delegate
+            {
+                string k = _txtKey.Text.Trim();
+                if (k.Length > 0 && _workingMap.ContainsKey(k))
+                {
+                    _workingMap.Remove(k);
+                    RefreshList();
+                }
+            };
+
+            Button btnOk = DlgUi.Btn("OK", 210, 244, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 304, 244, 86, DialogResult.Cancel);
+            btnOk.Click += delegate
+            {
+                if (existingMap != null)
+                {
+                    existingMap.Clear();
+                    foreach (KeyValuePair<string, string> kv in _workingMap)
+                    {
+                        existingMap[kv.Key] = kv.Value;
+                    }
+                }
+            };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+
+            RefreshList();
+        }
+
+        private void RefreshList()
+        {
+            _lbKeys.Items.Clear();
+            foreach (KeyValuePair<string, string> kv in _workingMap)
+            {
+                _lbKeys.Items.Add(kv.Key + " -> " + kv.Value);
+            }
+            if (_lbKeys.Items.Count > 0) _lbKeys.SelectedIndex = 0;
+        }
+    }
+
+    // 19. Create Profile Dialog (File -> Create profile...)
+    public sealed class CreateProfileDialog : Form
+    {
+        private readonly TextBox _txtName;
+        public string ProfileName { get; private set; }
+
+        public CreateProfileDialog()
+        {
+            DlgUi.StyleClassic(this, Loc.Get("Strings\\File\\NewProfile\\Title", "Create Profile"), 370, 235);
+            Controls.Add(DlgUi.Lbl(Loc.Get("Strings\\File\\NewProfile\\Name", "Name:"), 14, 18));
+            _txtName = DlgUi.Tb(80, 18, 256, "Default Track Profile");
+            Controls.Add(_txtName);
+
+            Controls.Add(DlgUi.Lbl("Existing profiles:", 14, 48));
+            ListBox lb = new ListBox { Location = new Point(14, 68), Size = new Size(322, 80) };
+            for (int i = 0; i < LynxExtendedConfig.Instance.SavedProfiles.Count; i++)
+            {
+                lb.Items.Add(LynxExtendedConfig.Instance.SavedProfiles[i]);
+            }
+            lb.SelectedIndexChanged += delegate
+            {
+                if (lb.SelectedItem != null) _txtName.Text = lb.SelectedItem.ToString();
+            };
+            Controls.Add(lb);
+
+            Button btnOk = DlgUi.Btn("OK", 158, 160, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 250, 160, 86, DialogResult.Cancel);
+            btnOk.Click += delegate
+            {
+                ProfileName = _txtName.Text.Trim();
+            };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+        }
+    }
+
+    // 20. Enter Serial Number Dialog (Help -> Enter serial number...)
+    public sealed class EnterSerialNumberDialog : Form
+    {
+        private readonly TextBox _txtSerial;
+        private readonly ListBox _lbSerials;
+
+        public EnterSerialNumberDialog()
+        {
+            DlgUi.StyleClassic(this, Loc.GetClean("Strings\\MenuBar\\Help\\EnterSN", "Enter serial number"), 400, 270);
+            Controls.Add(DlgUi.Lbl("Serial / Plugin Key:", 14, 18));
+            _txtSerial = DlgUi.Tb(132, 18, 238, "");
+            Controls.Add(_txtSerial);
+
+            Button btnAdd = new Button { Text = "Add", Location = new Point(132, 46), Size = new Size(78, 24) };
+            Button btnRemove = new Button { Text = "Remove", Location = new Point(216, 46), Size = new Size(78, 24) };
+            Controls.Add(btnAdd);
+            Controls.Add(btnRemove);
+
+            Controls.Add(DlgUi.Lbl("Installed serial numbers / plugins:", 14, 80));
+            _lbSerials = new ListBox { Location = new Point(14, 100), Size = new Size(356, 86) };
+            Controls.Add(_lbSerials);
+
+            Action refresh = delegate
+            {
+                _lbSerials.Items.Clear();
+                for (int i = 0; i < LynxExtendedConfig.Instance.InstalledSerialNumbers.Count; i++)
+                {
+                    _lbSerials.Items.Add(LynxExtendedConfig.Instance.InstalledSerialNumbers[i]);
+                }
+            };
+            refresh();
+
+            btnAdd.Click += delegate
+            {
+                string sn = _txtSerial.Text.Trim();
+                if (sn.Length > 0 && !LynxExtendedConfig.Instance.InstalledSerialNumbers.Contains(sn))
+                {
+                    LynxExtendedConfig.Instance.InstalledSerialNumbers.Add(sn);
+                    LynxExtendedConfig.Instance.Save();
+                    _txtSerial.Text = "";
+                    refresh();
+                }
+            };
+            btnRemove.Click += delegate
+            {
+                if (_lbSerials.SelectedItem != null)
+                {
+                    LynxExtendedConfig.Instance.InstalledSerialNumbers.Remove(_lbSerials.SelectedItem.ToString());
+                    LynxExtendedConfig.Instance.Save();
+                    refresh();
+                }
+            };
+
+            Button btnOk = DlgUi.Btn("OK", 190, 198, 86, DialogResult.OK);
+            Button btnCancel = DlgUi.Btn("Cancel", 284, 198, 86, DialogResult.Cancel);
+            btnOk.Click += delegate
+            {
+                string sn = _txtSerial.Text.Trim();
+                if (sn.Length > 0 && !LynxExtendedConfig.Instance.InstalledSerialNumbers.Contains(sn))
+                {
+                    LynxExtendedConfig.Instance.InstalledSerialNumbers.Add(sn);
+                }
+                LynxExtendedConfig.Instance.Save();
+            };
+            AcceptButton = btnOk;
+            CancelButton = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+        }
+    }
+
+    // 21. Help Contents Dialog (Help -> Contents)
+    public sealed class HelpContentsDialog : Form
+    {
+        public HelpContentsDialog()
+        {
+            DlgUi.StyleClassic(this, Loc.GetClean("Strings\\MenuBar\\Help\\Contents", "OptiFinish Help Contents"), 680, 440);
+
+            ListBox topics = new ListBox { Location = new Point(12, 12), Size = new Size(195, 344) };
+            TextBox viewer = new TextBox
+            {
+                Location = new Point(216, 12),
+                Size = new Size(436, 344),
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                BackColor = Color.White,
+                Font = new Font("Consolas", 9f)
+            };
+
+            string[] names = new string[]
+            {
+                "2D Selection & Crop",
+                "Export & Print Workflow",
+                "Evaluation & Results",
+                "White Balance & Enhance",
+                "Scoreboard & LapTime",
+                "Keyboard Shortcuts"
+            };
+            string[] bodies = new string[]
+            {
+                "2D SELECTION & CROP\r\n===================\r\n" +
+                "- Right-Click + Drag (or Alt + Left-Drag) draws a 2D selection box over the slit-scan strip.\r\n" +
+                "- Shift + Right-Click creates a fixed-size selection box centered at the cursor.\r\n" +
+                "- Releasing opens the Selection Popup Menu:\r\n" +
+                "  * Crop / Keep selection (Ctrl+K): trims vertical & horizontal bounds with Undo support (Ctrl+Z).\r\n" +
+                "  * Uncrop: restores full strip.\r\n" +
+                "  * Enhance: auto contrast & gamma stretch inside selection.\r\n" +
+                "- Right-clicking the Left/Right Lane Gutter opens the Lane Bar Popup (Lanes, Enhance regions, Adjustments...).\r\n",
+
+                "EXPORT & PRINT WORKFLOW\r\n=======================\r\n" +
+                "- When a 2D selection or active crop exists, Export..., Export video..., Print..., Print to bitmap..., and Set scoreboard image target ONLY the selected/cropped region.\r\n" +
+                "- Export... (Selection / Image -> Export...): saves lossless/direct PNG, JPG, BMP, or 24-bit TGA.\r\n" +
+                "- Export video... (Image -> Export video...): writes MJPEG AVI sequence.\r\n" +
+                "- Print... / Print to bitmap...: opens the FinishLynx Print dialog (Zoom 1/2/4/8, Smooth, DPI 300/600/1200, Image Height In/Cm, Lane Bars, Limit Res, Print Results, Maximum, Range) with live cropped preview.\r\n" +
+                "- File -> Save (.optr) persists camera crops, adjustments, and text overlays across reloads.\r\n",
+
+                "EVALUATION & RESULTS\r\n====================\r\n" +
+                "- Left-Click moves the evaluation crosshair and updates the live magnifier loupe.\r\n" +
+                "- Double-Click evaluates the currently selected competitor.\r\n" +
+                "- Space / Enter records the hairline time to the selected lane or advances splits.\r\n" +
+                "- Results menu supports Previous/Next Split navigation, Auto-Populate, Official Times, Delta Mode, and Apply default fields.\r\n",
+
+                "WHITE BALANCE & ENHANCE\r\n=======================\r\n" +
+                "- Selection Popup -> White balance (or Image -> White balance) samples neutral background at the crosshair/selection.\r\n" +
+                "- Image -> Set > lets you configure Object balance, Object area, PhotoEye balance/area, Capture area, and Length time.\r\n",
+
+                "SCOREBOARD & LAPTIME\r\n====================\r\n" +
+                "- Scoreboard -> Set image / Show image (VDM / ResulTV) sends cropped or evaluated results to connected displays.\r\n" +
+                "- LapTime -> Edit split keys... configures split trigger keys.\r\n",
+
+                "KEYBOARD SHORTCUTS\r\n==================\r\n" +
+                "Right-Drag / Alt+Left-Drag : Draw 2D Selection Box & open Popup Menu\r\n" +
+                "Shift + Right-Click        : Fixed-size Selection Box\r\n" +
+                "Alt + Arrow Keys           : Nudge active Selection Box\r\n" +
+                "Esc                        : Clear active Selection Box\r\n" +
+                "Ctrl + K                   : Crop to Selection\r\n" +
+                "Ctrl + U                   : Uncrop\r\n" +
+                "Ctrl + Z                   : Undo Crop / Edit\r\n" +
+                "Ctrl + A                   : Arm / Select all (in Edit menu)\r\n" +
+                "Ctrl + C                   : Copy Cropped Image & Time to Clipboard\r\n" +
+                "Ctrl + F / Ctrl + G        : Full-Screen View\r\n"
+            };
+
+            topics.Items.AddRange(names);
+            topics.SelectedIndexChanged += delegate
+            {
+                if (topics.SelectedIndex >= 0 && topics.SelectedIndex < bodies.Length)
+                {
+                    viewer.Text = bodies[topics.SelectedIndex];
+                }
+            };
+            topics.SelectedIndex = 0;
+
+            Button btnClose = DlgUi.Btn("OK", 566, 366, 86, DialogResult.OK);
+            AcceptButton = btnClose;
+            Controls.Add(topics);
+            Controls.Add(viewer);
+            Controls.Add(btnClose);
+        }
+    }
 }

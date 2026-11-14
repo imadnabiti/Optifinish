@@ -99,6 +99,8 @@ namespace OptiFinish.UI
         private bool _isSelectingZoomBox;
         private Point _zoomBoxStart;
         private Point _zoomBoxCurrent;
+        private bool _hasActiveSelectionBox;
+        private bool _fixedSelectionClickMode;
 
         // IdentiLynx 2D Video panning state
         private PointF _videoPanOffset = PointF.Empty;
@@ -109,6 +111,12 @@ namespace OptiFinish.UI
         public event EventHandler<HairlineChangedEventArgs> HairlineMoved;
         public event EventHandler<HairlineChangedEventArgs> QuickEvaluateRequested;
         public event EventHandler<double> SetZeroOriginRequested;
+        public event EventHandler<EventArgs> ExportSelectionRequested;
+        public event EventHandler<EventArgs> ExportVideoSelectionRequested;
+        public event EventHandler<EventArgs> PrintSelectionRequested;
+        public event EventHandler<EventArgs> PrintBitmapSelectionRequested;
+        public event EventHandler<EventArgs> SetScoreboardImageRequested;
+        public event EventHandler<EventArgs> OpenAdjustmentsRequested;
 
         public RaceEventDocument Document
         {
@@ -362,6 +370,16 @@ namespace OptiFinish.UI
         private CropWindow _lastBoxSelectionCrop;
         public event EventHandler<EventArgs> SelectionActionCompleted;
 
+        public bool HasActiveSelectionBox
+        {
+            get { return _hasActiveSelectionBox && _lastBoxSelectionCrop != null; }
+        }
+
+        public CropWindow ActiveSelectionCrop
+        {
+            get { return _hasActiveSelectionBox ? _lastBoxSelectionCrop : null; }
+        }
+
         private void GetEffectiveColumnBounds(SlitCameraStream cam, out double minCol, out double maxCol)
         {
             minCol = 0.0;
@@ -373,11 +391,80 @@ namespace OptiFinish.UI
             }
         }
 
+        public CropWindow GetEffectiveExportCrop()
+        {
+            if (_hasActiveSelectionBox && _lastBoxSelectionCrop != null)
+            {
+                return _lastBoxSelectionCrop;
+            }
+            SlitCameraStream cam = ActiveStream;
+            if (cam != null && cam.ActiveCrop != null)
+            {
+                return cam.ActiveCrop;
+            }
+            if (_document != null && cam != null && cam.TotalColumns > 1 &&
+                (_document.MarkedStartFrameTime.HasValue || _document.MarkedEndFrameTime.HasValue))
+            {
+                double t0 = _document.MarkedStartFrameTime ?? cam.ColumnToTimeSeconds(0);
+                double t1 = _document.MarkedEndFrameTime ?? cam.ColumnToTimeSeconds(cam.TotalColumns - 1);
+                double cA = cam.TimeSecondsToColumn(t0);
+                double cB = cam.TimeSecondsToColumn(t1);
+                int sCol = Math.Max(0, (int)Math.Floor(Math.Min(cA, cB)));
+                int eCol = Math.Min(cam.TotalColumns - 1, (int)Math.Ceiling(Math.Max(cA, cB)));
+                if (eCol > sCol + 1)
+                {
+                    return new CropWindow(sCol, eCol, 0f, 1f);
+                }
+            }
+            return null;
+        }
+
+        public void ClearSelectionBox()
+        {
+            _hasActiveSelectionBox = false;
+            _lastBoxSelectionCrop = null;
+            _isSelectingZoomBox = false;
+            Invalidate();
+            if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
+        }
+
+        public void SelectAllStrip()
+        {
+            SlitCameraStream cam = ActiveStream;
+            if (cam == null || cam.IsVideo || cam.TotalColumns < 2) return;
+            double minCol, maxCol;
+            GetEffectiveColumnBounds(cam, out minCol, out maxCol);
+            float vTop = cam.ActiveCrop != null ? cam.ActiveCrop.TopRatio : 0f;
+            float vBot = cam.ActiveCrop != null ? cam.ActiveCrop.BottomRatio : 1f;
+            _lastBoxSelectionCrop = new CropWindow((int)minCol, (int)Math.Max(minCol + 1, maxCol - 1), vTop, vBot);
+            _hasActiveSelectionBox = true;
+            Invalidate();
+            if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
+        }
+
+        public void ZoomToActiveSelection()
+        {
+            SlitCameraStream cam = ActiveStream;
+            CropWindow sel = _lastBoxSelectionCrop;
+            if (cam == null || sel == null) return;
+            Rectangle imgRect = GetImageCanvasRect();
+            double colSpan = Math.Max(10.0, sel.EndCol - sel.StartCol);
+            _zoomFactor = Math.Max(0.25, Math.Min(16.0, imgRect.Width / colSpan));
+            _scrollColumnOffset = sel.StartCol;
+            ClampScrollAndCursor();
+            Invalidate();
+        }
+
         public void CropToCurrentZoomOrSelection()
         {
             SlitCameraStream cam = ActiveStream;
             if (cam == null || cam.IsVideo || cam.TotalColumns < 10) return;
-            CropWindow crop = _lastBoxSelectionCrop;
+
+            CropWindow crop = (_hasActiveSelectionBox && _lastBoxSelectionCrop != null) ? _lastBoxSelectionCrop : null;
+            if (crop == null && _document != null && (_document.MarkedStartFrameTime.HasValue || _document.MarkedEndFrameTime.HasValue))
+            {
+                crop = GetEffectiveExportCrop();
+            }
             if (crop == null)
             {
                 Rectangle imgRect = GetImageCanvasRect();
@@ -385,12 +472,35 @@ namespace OptiFinish.UI
                 int s = Math.Max(0, (int)Math.Floor(_scrollColumnOffset));
                 int e = Math.Min(cam.TotalColumns - 1, (int)Math.Ceiling(s + visibleCols));
                 if (e - s < 10) return;
-                crop = new CropWindow(s, e, 0f, 1f);
+                float vTop = cam.ActiveCrop != null ? cam.ActiveCrop.TopRatio : 0f;
+                float vBot = cam.ActiveCrop != null ? cam.ActiveCrop.BottomRatio : 1f;
+                crop = new CropWindow(s, e, vTop, vBot);
             }
+
+            CropWindow prevCrop = cam.ActiveCrop;
             if (cam.ActiveCrop != null) cam.CropUndoStack.Push(cam.ActiveCrop);
+            if (_document != null)
+            {
+                _document.UndoActions.Push(delegate
+                {
+                    cam.ActiveCrop = prevCrop;
+                    _scrollColumnOffset = prevCrop != null ? prevCrop.StartCol : 0.0;
+                    ClampScrollAndCursor();
+                    Invalidate();
+                    if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
+                });
+            }
+
             cam.ActiveCrop = crop;
+            _hasActiveSelectionBox = false;
             _lastBoxSelectionCrop = null;
+
+            Rectangle viewRect = GetImageCanvasRect();
+            double newSpan = Math.Max(16.0, crop.EndCol - crop.StartCol);
+            _zoomFactor = Math.Max(0.25, Math.Min(16.0, viewRect.Width / newSpan));
             _scrollColumnOffset = crop.StartCol;
+            _cursorTimeSeconds = cam.ColumnToTimeSeconds(0.5 * (crop.StartCol + crop.EndCol));
+            ClampScrollAndCursor();
             Invalidate();
             if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
         }
@@ -405,7 +515,10 @@ namespace OptiFinish.UI
             SlitCameraStream cam = ActiveStream;
             if (cam == null) return;
             SlitScanEngine.UncropStream(cam);
+            _hasActiveSelectionBox = false;
+            _lastBoxSelectionCrop = null;
             _scrollColumnOffset = cam.ActiveCrop != null ? cam.ActiveCrop.StartCol : 0.0;
+            ClampScrollAndCursor();
             Invalidate();
             if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
         }
@@ -414,10 +527,25 @@ namespace OptiFinish.UI
         {
             SlitCameraStream cam = ActiveStream;
             if (cam == null || cam.IsVideo) return;
+            CropWindow prevCrop = cam.ActiveCrop;
             SlitScanEngine.AutocropStream(cam, leaderCols, trailerCols);
+            _hasActiveSelectionBox = false;
+            _lastBoxSelectionCrop = null;
+            if (_document != null && cam.ActiveCrop != prevCrop)
+            {
+                _document.UndoActions.Push(delegate
+                {
+                    cam.ActiveCrop = prevCrop;
+                    _scrollColumnOffset = prevCrop != null ? prevCrop.StartCol : 0.0;
+                    ClampScrollAndCursor();
+                    Invalidate();
+                    if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
+                });
+            }
             if (cam.ActiveCrop != null)
             {
                 _scrollColumnOffset = cam.ActiveCrop.StartCol;
+                ClampScrollAndCursor();
             }
             Invalidate();
             if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
@@ -436,7 +564,11 @@ namespace OptiFinish.UI
         {
             SlitCameraStream cam = ActiveStream;
             if (cam == null || cam.IsVideo) return;
-            if (_lastBoxSelectionCrop != null)
+            if (_hasActiveSelectionBox && _lastBoxSelectionCrop != null)
+            {
+                cam.EnhanceRegions.Add(new EnhanceRegion(_lastBoxSelectionCrop.TopRatio, _lastBoxSelectionCrop.BottomRatio));
+            }
+            else if (_lastBoxSelectionCrop != null)
             {
                 cam.EnhanceRegions.Add(new EnhanceRegion(_lastBoxSelectionCrop.TopRatio, _lastBoxSelectionCrop.BottomRatio));
                 _lastBoxSelectionCrop = null;
@@ -550,19 +682,20 @@ namespace OptiFinish.UI
             // 2. Draw Horizontal Track Lane Overlay Lines (supports perspective-calibrated boundaries from .evn)
             float[] calibBounds = cam.CalibratedLaneBoundaries ?? _document.CalibratedLaneBoundaries;
             bool hasCalibLanes = (calibBounds != null && calibBounds.Length >= 2);
-            float topCurbY = imgRect.Top + imgRect.Height * _document.LaneTopRatio;
-            float bottomCurbY = imgRect.Top + imgRect.Height * _document.LaneBottomRatio;
             int lanes = hasCalibLanes ? (calibBounds.Length - 1) : Math.Max(1, _document.LaneCount);
-            float laneH = (bottomCurbY - topCurbY) / Math.Max(1, lanes);
 
             if (_showLaneGrid)
             {
                 for (int ln = 0; ln <= lanes; ln++)
                 {
-                    float ly = hasCalibLanes
-                        ? (imgRect.Top + calibBounds[ln] * imgRect.Height)
-                        : (topCurbY + ln * laneH);
-                    g.DrawLine(LaneGridPen, imgRect.Left, ly, imgRect.Right, ly);
+                    float r = hasCalibLanes
+                        ? calibBounds[ln]
+                        : (_document.LaneTopRatio + (_document.LaneBottomRatio - _document.LaneTopRatio) * ((float)ln / Math.Max(1, lanes)));
+                    float ly = StripRatioToScreenY(r, imgRect, vTop, vBot);
+                    if (ly >= imgRect.Top && ly <= imgRect.Bottom)
+                    {
+                        g.DrawLine(LaneGridPen, imgRect.Left, ly, imgRect.Right, ly);
+                    }
                 }
             }
 
@@ -605,7 +738,9 @@ namespace OptiFinish.UI
 
                         g.DrawLine(linePen, sx, imgRect.Top, sx, imgRect.Bottom);
 
-                        float sy = imgRect.Top + c.EvaluatedVerticalRatio * imgRect.Height;
+                        float sy = StripRatioToScreenY(c.EvaluatedVerticalRatio, imgRect, vTop, vBot);
+                        if (sy < imgRect.Top - 16f || sy > imgRect.Bottom + 16f) continue;
+
                         string badgeText = string.Format(CultureInfo.InvariantCulture, "#{0} {1} {2}",
                             c.Place > 0 ? c.Place.ToString(CultureInfo.InvariantCulture) : "-",
                             !string.IsNullOrEmpty(c.LastName) ? c.LastName : ("Bib " + c.BibId),
@@ -630,7 +765,7 @@ namespace OptiFinish.UI
                 double col = cam.TimeSecondsToColumn(ann.TimeSeconds);
                 float sx = imgRect.Left + (float)((col - _scrollColumnOffset) * _zoomFactor);
                 if (sx < imgRect.Left || sx > imgRect.Right) continue;
-                float sy = imgRect.Top + ann.VerticalRatio * imgRect.Height;
+                float sy = StripRatioToScreenY(ann.VerticalRatio, imgRect, vTop, vBot);
 
                 SizeF asz = g.MeasureString(ann.Text, AnnotationFont);
                 g.FillRectangle(AnnotationBgBrush, sx, sy, asz.Width + 6f, asz.Height + 2f);
@@ -643,9 +778,11 @@ namespace OptiFinish.UI
                 {
                     ImageOverlayItem ov = _document.Overlays[oi];
                     if (ov == null || !ov.Visible) continue;
+                    int grpIdx = Math.Max(0, Math.Min(8, ov.GroupIndex));
+                    if (_document.OverlayGroupVisible != null && !_document.OverlayGroupVisible[grpIdx]) continue;
                     double col = cam.TimeSecondsToColumn(ov.TimeSeconds);
                     float sx = imgRect.Left + (float)((col - _scrollColumnOffset) * _zoomFactor);
-                    float sy = imgRect.Top + ov.VerticalRatio * imgRect.Height;
+                    float sy = StripRatioToScreenY(ov.VerticalRatio, imgRect, vTop, vBot);
                     if (ov.Kind == ImageOverlayKind.EventName)
                     {
                         sx = imgRect.Left + 10f;
@@ -657,14 +794,15 @@ namespace OptiFinish.UI
                     }
                     using (SolidBrush fg = new SolidBrush(ov.OverlayColor.A > 0 ? ov.OverlayColor : Color.Yellow))
                     using (SolidBrush bg = new SolidBrush(Color.FromArgb(190, 15, 23, 42)))
+                    using (Font ovFont = new Font(!string.IsNullOrEmpty(ov.FontName) ? ov.FontName : "Arial", Math.Max(7f, Math.Min(28f, ov.FontSizePt > 0 ? ov.FontSizePt : 9f)), ov.FontBold ? FontStyle.Bold : FontStyle.Regular))
                     {
-                        if (ov.Kind == ImageOverlayKind.ClosestTime || ov.Kind == ImageOverlayKind.HashTime)
+                        if (ov.Kind == ImageOverlayKind.ClosestTime || ov.Kind == ImageOverlayKind.HashTime || ov.ShowLine)
                         {
                             using (Pen hp = new Pen(fg.Color, 1.5f)) g.DrawLine(hp, sx, imgRect.Top, sx, imgRect.Bottom);
                         }
-                        SizeF sz = g.MeasureString(ov.Text, AnnotationFont);
+                        SizeF sz = g.MeasureString(ov.Text, ovFont);
                         g.FillRectangle(bg, sx, sy, sz.Width + 8f, sz.Height + 4f);
-                        g.DrawString(ov.Text, AnnotationFont, fg, sx + 4f, sy + 2f);
+                        g.DrawString(ov.Text, ovFont, fg, sx + 4f, sy + 2f);
                     }
                 }
             }
@@ -684,31 +822,39 @@ namespace OptiFinish.UI
             // 5. Draw Active Precision Hairline (Vertical Hash Line + Horizontal Crosshair)
             double cursorCol = cam.TimeSecondsToColumn(_cursorTimeSeconds);
             float hairlineX = imgRect.Left + (float)((cursorCol - _scrollColumnOffset) * _zoomFactor);
-            float crosshairY = imgRect.Top + _cursorVerticalRatio * imgRect.Height;
+            float crosshairY = StripRatioToScreenY(_cursorVerticalRatio, imgRect, vTop, vBot);
             int activeLane = _document.RatioToLane(_cursorVerticalRatio);
 
             if (hairlineX >= imgRect.Left && hairlineX <= imgRect.Right)
             {
                 // Highlighted lane band under crosshair
                 int clampedLane = Math.Max(1, Math.Min(lanes, activeLane));
-                float activeLaneTop = hasCalibLanes
-                    ? (imgRect.Top + calibBounds[clampedLane - 1] * imgRect.Height)
-                    : (topCurbY + (clampedLane - 1) * laneH);
-                float activeLaneBot = hasCalibLanes
-                    ? (imgRect.Top + calibBounds[clampedLane] * imgRect.Height)
-                    : (activeLaneTop + laneH);
+                float rTopLane = hasCalibLanes
+                    ? calibBounds[clampedLane - 1]
+                    : (_document.LaneTopRatio + (_document.LaneBottomRatio - _document.LaneTopRatio) * ((float)(clampedLane - 1) / Math.Max(1, lanes)));
+                float rBotLane = hasCalibLanes
+                    ? calibBounds[clampedLane]
+                    : (_document.LaneTopRatio + (_document.LaneBottomRatio - _document.LaneTopRatio) * ((float)clampedLane / Math.Max(1, lanes)));
+                float activeLaneTop = Math.Max(imgRect.Top, StripRatioToScreenY(rTopLane, imgRect, vTop, vBot));
+                float activeLaneBot = Math.Min(imgRect.Bottom, StripRatioToScreenY(rBotLane, imgRect, vTop, vBot));
 
-                g.FillRectangle(ActiveLaneHighlightBrush, imgRect.Left, activeLaneTop, imgRect.Width, Math.Max(2f, activeLaneBot - activeLaneTop));
+                if (activeLaneBot > activeLaneTop)
+                {
+                    g.FillRectangle(ActiveLaneHighlightBrush, imgRect.Left, activeLaneTop, imgRect.Width, Math.Max(2f, activeLaneBot - activeLaneTop));
+                }
 
                 // Subtle outer contrast shadow for the 1px hairline so it is visible on both white and dark pixels
                 g.DrawLine(HairlineShadowPen, hairlineX, imgRect.Top, hairlineX, imgRect.Bottom);
                 g.DrawLine(HairlineGoldPen, hairlineX, imgRect.Top, hairlineX, imgRect.Bottom);
 
                 // Horizontal Crosshair bar & target circle
-                float chHalfW = 26f;
-                g.DrawLine(CrosshairShadowPen, hairlineX - chHalfW, crosshairY, hairlineX + chHalfW, crosshairY);
-                g.DrawLine(CrosshairCyanPen, hairlineX - chHalfW, crosshairY, hairlineX + chHalfW, crosshairY);
-                g.DrawEllipse(CrosshairCyanPen, hairlineX - 7f, crosshairY - 7f, 14f, 14f);
+                if (crosshairY >= imgRect.Top && crosshairY <= imgRect.Bottom)
+                {
+                    float chHalfW = 26f;
+                    g.DrawLine(CrosshairShadowPen, hairlineX - chHalfW, crosshairY, hairlineX + chHalfW, crosshairY);
+                    g.DrawLine(CrosshairCyanPen, hairlineX - chHalfW, crosshairY, hairlineX + chHalfW, crosshairY);
+                    g.DrawEllipse(CrosshairCyanPen, hairlineX - 7f, crosshairY - 7f, 14f, 14f);
+                }
 
                 // Floating HUD Time + Lane Readout Pill at top of Hairline
                 string hudText = string.Format(CultureInfo.InvariantCulture,
@@ -725,22 +871,30 @@ namespace OptiFinish.UI
                 g.DrawString(hudText, HudFont, HudFgBrush, hudRect.X + 5f, hudRect.Y + 2f);
             }
 
-            // 6. Right-click Zoom/Crop Selection Box
+            // 6. Live or Persistent FinishLynx 2D Selection Box (Right-Drag or Shift+Right-Click)
             if (_isSelectingZoomBox)
             {
-                int zx = Math.Min(_zoomBoxStart.X, _zoomBoxCurrent.X);
-                int zy = Math.Min(_zoomBoxStart.Y, _zoomBoxCurrent.Y);
-                int zw = Math.Abs(_zoomBoxCurrent.X - _zoomBoxStart.X);
-                int zh = Math.Abs(_zoomBoxCurrent.Y - _zoomBoxStart.Y);
-                g.FillRectangle(ZoomBoxFillBrush, zx, zy, zw, zh);
-                g.DrawRectangle(ZoomBoxBorderPen, zx, zy, zw, zh);
-                if (zw > 10 && imgRect.Height > 10)
+                int zx = Math.Max(imgRect.Left, Math.Min(_zoomBoxStart.X, _zoomBoxCurrent.X));
+                int zy = Math.Max(imgRect.Top, Math.Min(_zoomBoxStart.Y, _zoomBoxCurrent.Y));
+                int zr = Math.Min(imgRect.Right, Math.Max(_zoomBoxStart.X, _zoomBoxCurrent.X));
+                int zb = Math.Min(imgRect.Bottom, Math.Max(_zoomBoxStart.Y, _zoomBoxCurrent.Y));
+                int zw = Math.Max(1, zr - zx);
+                int zh = Math.Max(1, zb - zy);
+                DrawSelectionMarquee(g, zx, zy, zw, zh, cam, imgRect, vTop, vBot, true);
+            }
+            else if (_hasActiveSelectionBox && _lastBoxSelectionCrop != null)
+            {
+                float sx0 = imgRect.Left + (float)((_lastBoxSelectionCrop.StartCol - _scrollColumnOffset) * _zoomFactor);
+                float sx1 = imgRect.Left + (float)((_lastBoxSelectionCrop.EndCol - _scrollColumnOffset) * _zoomFactor);
+                float sy0 = StripRatioToScreenY(_lastBoxSelectionCrop.TopRatio, imgRect, vTop, vBot);
+                float sy1 = StripRatioToScreenY(_lastBoxSelectionCrop.BottomRatio, imgRect, vTop, vBot);
+                int zx = (int)Math.Round(Math.Max(imgRect.Left, Math.Min(sx0, sx1)));
+                int zr = (int)Math.Round(Math.Min(imgRect.Right, Math.Max(sx0, sx1)));
+                int zy = (int)Math.Round(Math.Max(imgRect.Top, Math.Min(sy0, sy1)));
+                int zb = (int)Math.Round(Math.Min(imgRect.Bottom, Math.Max(sy0, sy1)));
+                if (zr > zx + 2 && zb > zy + 2)
                 {
-                    int sCol = Math.Max(0, (int)Math.Floor(_scrollColumnOffset + (zx - imgRect.Left) / _zoomFactor));
-                    int eCol = Math.Min(cam.TotalColumns - 1, (int)Math.Ceiling(_scrollColumnOffset + ((zx + zw) - imgRect.Left) / _zoomFactor));
-                    float tr = Math.Max(0f, Math.Min(1f, (float)(zy - imgRect.Top) / imgRect.Height));
-                    float br = Math.Max(tr + 0.02f, Math.Min(1f, (float)(zy + zh - imgRect.Top) / imgRect.Height));
-                    _lastBoxSelectionCrop = new CropWindow(sCol, eCol, tr, br);
+                    DrawSelectionMarquee(g, zx, zy, zr - zx, zb - zy, cam, imgRect, vTop, vBot, false);
                 }
             }
 
@@ -765,8 +919,8 @@ namespace OptiFinish.UI
                         {
                             EnhanceRegion er = cam.EnhanceRegions[ri];
                             if (!er.Enabled) continue;
-                            float ry1 = imgRect.Top + er.TopRatio * imgRect.Height;
-                            float ry2 = imgRect.Top + er.BottomRatio * imgRect.Height;
+                            float ry1 = StripRatioToScreenY(er.TopRatio, imgRect, vTop, vBot);
+                            float ry2 = StripRatioToScreenY(er.BottomRatio, imgRect, vTop, vBot);
                             g.FillRectangle(enhBarBrush, gx + 1f, Math.Min(ry1, ry2), 4f, Math.Max(4f, Math.Abs(ry2 - ry1)));
                         }
                     }
@@ -774,9 +928,11 @@ namespace OptiFinish.UI
 
                 for (int ln = 1; ln <= lanes; ln++)
                 {
-                    float ly = hasCalibLanes
-                        ? (imgRect.Top + 0.5f * (calibBounds[ln - 1] + calibBounds[ln]) * imgRect.Height)
-                        : (topCurbY + (ln - 0.5f) * laneH);
+                    float rLaneCenter = hasCalibLanes
+                        ? 0.5f * (calibBounds[ln - 1] + calibBounds[ln])
+                        : (_document.LaneTopRatio + (_document.LaneBottomRatio - _document.LaneTopRatio) * ((ln - 0.5f) / Math.Max(1, lanes)));
+                    float ly = StripRatioToScreenY(rLaneCenter, imgRect, vTop, vBot);
+                    if (ly < imgRect.Top - 8f || ly > imgRect.Bottom + 8f) continue;
                     bool isHovered = (ln == activeLane);
                     RectangleF pill = new RectangleF(gx + 4f, ly - 10f, LaneGutterWidthPx - 8f, 20f);
                     if (isHovered)
@@ -960,6 +1116,81 @@ namespace OptiFinish.UI
             g.DrawRectangle(Pens.White, thumbRect.X, thumbRect.Y, thumbRect.Width, thumbRect.Height);
         }
 
+        private static float StripRatioToScreenY(float ratio, Rectangle imgRect, float vTop, float vBot)
+        {
+            return imgRect.Top + ((ratio - vTop) / Math.Max(0.01f, vBot - vTop)) * imgRect.Height;
+        }
+
+        private static float ScreenYToStripRatio(float y, Rectangle imgRect, float vTop, float vBot)
+        {
+            float rel = (y - imgRect.Top) / Math.Max(1f, (float)imgRect.Height);
+            return Math.Max(0f, Math.Min(1f, vTop + rel * (vBot - vTop)));
+        }
+
+        private void DrawSelectionMarquee(Graphics g, int zx, int zy, int zw, int zh, SlitCameraStream cam, Rectangle imgRect, float vTop, float vBot, bool isDraggingNow)
+        {
+            using (SolidBrush fill = new SolidBrush(Color.FromArgb(isDraggingNow ? 45 : 28, 56, 189, 248)))
+            using (Pen outerDark = new Pen(Color.Black, 2f))
+            using (Pen innerWhite = new Pen(Color.White, 1.2f))
+            {
+                g.FillRectangle(fill, zx, zy, zw, zh);
+                g.DrawRectangle(outerDark, zx, zy, zw, zh);
+                g.DrawRectangle(innerWhite, zx + 1, zy + 1, Math.Max(1, zw - 2), Math.Max(1, zh - 2));
+
+                // Corner grip squares (FinishLynx signature selection handles)
+                int hs = 4;
+                Rectangle[] handles = new Rectangle[]
+                {
+                    new Rectangle(zx - 2, zy - 2, hs, hs),
+                    new Rectangle(zx + zw - 2, zy - 2, hs, hs),
+                    new Rectangle(zx - 2, zy + zh - 2, hs, hs),
+                    new Rectangle(zx + zw - 2, zy + zh - 2, hs, hs)
+                };
+                for (int i = 0; i < handles.Length; i++)
+                {
+                    g.FillRectangle(Brushes.White, handles[i]);
+                    g.DrawRectangle(Pens.Black, handles[i]);
+                }
+
+                if (cam != null && imgRect.Height > 10 && zw > 4 && zh > 4)
+                {
+                    double minCol, maxCol;
+                    GetEffectiveColumnBounds(cam, out minCol, out maxCol);
+                    int sCol = Math.Max((int)minCol, (int)Math.Floor(_scrollColumnOffset + (zx - imgRect.Left) / _zoomFactor));
+                    int eCol = Math.Min((int)Math.Max(sCol + 1, maxCol - 1), (int)Math.Ceiling(_scrollColumnOffset + ((zx + zw) - imgRect.Left) / _zoomFactor));
+                    float tr = ScreenYToStripRatio(zy, imgRect, vTop, vBot);
+                    float br = Math.Max(tr + 0.02f, Math.Min(1f, ScreenYToStripRatio(zy + zh, imgRect, vTop, vBot)));
+
+                    if (isDraggingNow)
+                    {
+                        _lastBoxSelectionCrop = new CropWindow(sCol, eCol, tr, br);
+                    }
+
+                    double tA = cam.ColumnToTimeSeconds(sCol);
+                    double tB = cam.ColumnToTimeSeconds(eCol);
+                    string selInfo = string.Format(CultureInfo.InvariantCulture, "SEL {0}px ({1:0.000}s–{2:0.000}s)",
+                        Math.Max(1, eCol - sCol), Math.Min(tA, tB), Math.Max(tA, tB));
+                    SizeF isz = g.MeasureString(selInfo, BadgeFont);
+                    float ly = Math.Max(imgRect.Top + 2f, zy - isz.Height - 4f);
+                    float lx = Math.Max(imgRect.Left + 2f, Math.Min(imgRect.Right - isz.Width - 10f, zx));
+                    g.FillRectangle(BadgeBgBrush, lx, ly, isz.Width + 6f, isz.Height + 2f);
+                    g.DrawString(selInfo, BadgeFont, HudFgBrush, lx + 3f, ly + 1f);
+                }
+            }
+        }
+
+        private bool IsPointInLaneGutter(Point pt)
+        {
+            if (_document == null) return false;
+            bool drawLeftBar = (_document.LaneBarSide == LaneBarPosition.Left || _document.LaneBarSide == LaneBarPosition.Both);
+            bool drawRightBar = (_document.LaneBarSide == LaneBarPosition.Right || _document.LaneBarSide == LaneBarPosition.Both);
+            if (drawLeftBar && pt.X >= 0 && pt.X < LaneGutterWidthPx && pt.Y >= RulerHeightPx && pt.Y < Height - ScrollBarHeightPx)
+                return true;
+            if (drawRightBar && pt.X >= Width - LaneGutterWidthPx && pt.X <= Width && pt.Y >= RulerHeightPx && pt.Y < Height - ScrollBarHeightPx)
+                return true;
+            return false;
+        }
+
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
@@ -997,9 +1228,17 @@ namespace OptiFinish.UI
                 }
                 else if (e.Button == MouseButtons.Right)
                 {
-                    _videoPanOffset = PointF.Empty;
-                    Invalidate();
+                    _isSelectingZoomBox = true;
+                    _zoomBoxStart = e.Location;
+                    _zoomBoxCurrent = e.Location;
                 }
+                return;
+            }
+
+            // Lane bar gutter right-click popup (Lanes, Enhance regions, Adjustments...)
+            if (IsPointInLaneGutter(e.Location) && e.Button == MouseButtons.Right)
+            {
+                ShowLaneBarContextMenu(e.Location);
                 return;
             }
 
@@ -1016,6 +1255,14 @@ namespace OptiFinish.UI
 
             if (e.Button == MouseButtons.Left)
             {
+                if ((ModifierKeys & Keys.Alt) == Keys.Alt)
+                {
+                    _isSelectingZoomBox = true;
+                    _fixedSelectionClickMode = false;
+                    _zoomBoxStart = e.Location;
+                    _zoomBoxCurrent = e.Location;
+                    return;
+                }
                 if ((ModifierKeys & Keys.Control) == Keys.Control)
                 {
                     UpdateHairlineFromMouse(e.Location);
@@ -1039,6 +1286,36 @@ namespace OptiFinish.UI
             }
             else if (e.Button == MouseButtons.Right)
             {
+                if ((ModifierKeys & Keys.Shift) == Keys.Shift)
+                {
+                    // FinishLynx Shift+Right-Click: Fixed-Size Selection Box (Options -> Image -> Selection)
+                    _fixedSelectionClickMode = true;
+                    int fw = Math.Max(20, OptiFinish.LynxExtendedConfig.Instance.SelectionFixedWidth);
+                    int fh = Math.Max(20, OptiFinish.LynxExtendedConfig.Instance.SelectionFixedHeight);
+                    double minCol, maxCol;
+                    GetEffectiveColumnBounds(cam, out minCol, out maxCol);
+                    float vTop = cam.ActiveCrop != null ? Math.Max(0f, Math.Min(0.95f, cam.ActiveCrop.TopRatio)) : 0f;
+                    float vBot = cam.ActiveCrop != null ? Math.Max(vTop + 0.05f, Math.Min(1f, cam.ActiveCrop.BottomRatio)) : 1f;
+
+                    int halfW = (int)Math.Round(Math.Min(imgRect.Width * 0.48, fw * 0.5));
+                    int halfH = (int)Math.Round(Math.Min(imgRect.Height * 0.48, fh * 0.5));
+                    int zx = Math.Max(imgRect.Left, Math.Min(imgRect.Right - halfW * 2, e.X - halfW));
+                    int zy = Math.Max(imgRect.Top, Math.Min(imgRect.Bottom - halfH * 2, e.Y - halfH));
+                    int zw = Math.Max(12, Math.Min(imgRect.Right - zx, halfW * 2));
+                    int zh = Math.Max(12, Math.Min(imgRect.Bottom - zy, halfH * 2));
+
+                    int sCol = Math.Max((int)minCol, (int)Math.Floor(_scrollColumnOffset + (zx - imgRect.Left) / _zoomFactor));
+                    int eCol = Math.Min((int)Math.Max(sCol + 4, maxCol - 1), (int)Math.Ceiling(_scrollColumnOffset + ((zx + zw) - imgRect.Left) / _zoomFactor));
+                    float tr = ScreenYToStripRatio(zy, imgRect, vTop, vBot);
+                    float br = Math.Max(tr + 0.04f, Math.Min(1f, ScreenYToStripRatio(zy + zh, imgRect, vTop, vBot)));
+
+                    _lastBoxSelectionCrop = new CropWindow(sCol, eCol, tr, br);
+                    _hasActiveSelectionBox = true;
+                    Invalidate();
+                    return;
+                }
+
+                _fixedSelectionClickMode = false;
                 _isSelectingZoomBox = true;
                 _zoomBoxStart = e.Location;
                 _zoomBoxCurrent = e.Location;
@@ -1055,6 +1332,11 @@ namespace OptiFinish.UI
                 if (_isPanningVideo)
                 {
                     _videoPanOffset = new PointF(_videoPanStartOffset.X + (e.X - _videoPanStartMouse.X), _videoPanStartOffset.Y + (e.Y - _videoPanStartMouse.Y));
+                    Invalidate();
+                }
+                else if (_isSelectingZoomBox)
+                {
+                    _zoomBoxCurrent = e.Location;
                     Invalidate();
                 }
                 return;
@@ -1100,42 +1382,91 @@ namespace OptiFinish.UI
             if (cam != null && cam.IsVideo)
             {
                 _isPanningVideo = false;
+                if (e.Button == MouseButtons.Right && _isSelectingZoomBox)
+                {
+                    _isSelectingZoomBox = false;
+                    int vdx = Math.Abs(e.X - _zoomBoxStart.X);
+                    int vdy = Math.Abs(e.Y - _zoomBoxStart.Y);
+                    if (vdx <= 6 && vdy <= 6)
+                    {
+                        _videoPanOffset = PointF.Empty;
+                        Invalidate();
+                    }
+                    ShowContextToolsMenu(e.Location);
+                }
                 return;
             }
 
             if (e.Button == MouseButtons.Left)
             {
                 _isDraggingHairline = false;
+                if (_isSelectingZoomBox)
+                {
+                    _isSelectingZoomBox = false;
+                    FinalizeSelectionBoxFromDrag(cam, GetImageCanvasRect(), e.Location);
+                    Invalidate();
+                }
             }
             else if (e.Button == MouseButtons.Middle)
             {
                 _isPanning = false;
                 Cursor = Cursors.Cross;
             }
-            else if (e.Button == MouseButtons.Right && _isSelectingZoomBox)
+            else if (e.Button == MouseButtons.Right)
             {
-                _isSelectingZoomBox = false;
-                int dx = Math.Abs(e.X - _zoomBoxStart.X);
-                Rectangle imgRect = GetImageCanvasRect();
-
-                if (dx > 20 && cam != null)
+                if (_fixedSelectionClickMode)
                 {
-                    // Zoom into selected horizontal region
-                    int leftPx = Math.Max(imgRect.Left, Math.Min(_zoomBoxStart.X, e.X));
-                    int rightPx = Math.Min(imgRect.Right, Math.Max(_zoomBoxStart.X, e.X));
-                    double colStart = _scrollColumnOffset + ((leftPx - imgRect.Left) / _zoomFactor);
-                    double colSpan = Math.Max(10.0, (rightPx - leftPx) / _zoomFactor);
-                    _zoomFactor = Math.Max(0.25, Math.Min(16.0, imgRect.Width / colSpan));
-                    _scrollColumnOffset = colStart;
-                    ClampScrollAndCursor();
-                    Invalidate();
-                }
-                else
-                {
-                    UpdateHairlineFromMouse(e.Location);
+                    _fixedSelectionClickMode = false;
                     ShowContextToolsMenu(e.Location);
+                    return;
+                }
+                if (_isSelectingZoomBox)
+                {
+                    _isSelectingZoomBox = false;
+                    int dx = Math.Abs(e.X - _zoomBoxStart.X);
+                    int dy = Math.Abs(e.Y - _zoomBoxStart.Y);
+                    Rectangle imgRect = GetImageCanvasRect();
+
+                    if ((dx > 8 || dy > 8) && cam != null)
+                    {
+                        FinalizeSelectionBoxFromDrag(cam, imgRect, e.Location);
+                        Invalidate();
+                        ShowContextToolsMenu(e.Location);
+                    }
+                    else
+                    {
+                        UpdateHairlineFromMouse(e.Location);
+                        ShowContextToolsMenu(e.Location);
+                    }
                 }
             }
+        }
+
+        private void FinalizeSelectionBoxFromDrag(SlitCameraStream cam, Rectangle imgRect, Point endPt)
+        {
+            if (cam == null || cam.TotalColumns < 2 || imgRect.Height <= 4) return;
+
+            int zx = Math.Max(imgRect.Left, Math.Min(_zoomBoxStart.X, endPt.X));
+            int zy = Math.Max(imgRect.Top, Math.Min(_zoomBoxStart.Y, endPt.Y));
+            int zr = Math.Min(imgRect.Right, Math.Max(_zoomBoxStart.X, endPt.X));
+            int zb = Math.Min(imgRect.Bottom, Math.Max(_zoomBoxStart.Y, endPt.Y));
+            int zw = Math.Max(6, zr - zx);
+            int zh = Math.Max(6, zb - zy);
+
+            double minCol, maxCol;
+            GetEffectiveColumnBounds(cam, out minCol, out maxCol);
+            float vTop = cam.ActiveCrop != null ? Math.Max(0f, Math.Min(0.95f, cam.ActiveCrop.TopRatio)) : 0f;
+            float vBot = cam.ActiveCrop != null ? Math.Max(vTop + 0.05f, Math.Min(1f, cam.ActiveCrop.BottomRatio)) : 1f;
+
+            int sCol = Math.Max((int)minCol, (int)Math.Floor(_scrollColumnOffset + (zx - imgRect.Left) / _zoomFactor));
+            int eCol = Math.Min((int)Math.Max(sCol + 2, maxCol - 1), (int)Math.Ceiling(_scrollColumnOffset + ((zx + zw) - imgRect.Left) / _zoomFactor));
+            float tr = ScreenYToStripRatio(zy, imgRect, vTop, vBot);
+            float br = Math.Max(tr + 0.02f, Math.Min(1f, ScreenYToStripRatio(zy + zh, imgRect, vTop, vBot)));
+
+            _lastBoxSelectionCrop = new CropWindow(sCol, eCol, tr, br);
+            _hasActiveSelectionBox = true;
+            _cursorTimeSeconds = cam.ColumnToTimeSeconds(0.5 * (sCol + eCol));
+            _cursorVerticalRatio = 0.5f * (tr + br);
         }
 
         protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -1192,7 +1523,7 @@ namespace OptiFinish.UI
                 keyCode == Keys.Up || keyCode == Keys.Down ||
                 keyCode == Keys.PageUp || keyCode == Keys.PageDown ||
                 keyCode == Keys.Home || keyCode == Keys.End ||
-                keyCode == Keys.Enter)
+                keyCode == Keys.Enter || keyCode == Keys.Escape)
             {
                 return true;
             }
@@ -1202,6 +1533,49 @@ namespace OptiFinish.UI
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
+
+            if (e.KeyCode == Keys.Escape && _hasActiveSelectionBox)
+            {
+                ClearSelectionBox();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Alt && _hasActiveSelectionBox && _lastBoxSelectionCrop != null && ActiveStream != null)
+            {
+                int colShift = e.Shift ? 12 : 3;
+                float rShift = e.Shift ? 0.05f : 0.015f;
+                int span = Math.Max(4, _lastBoxSelectionCrop.EndCol - _lastBoxSelectionCrop.StartCol);
+                float rSpan = Math.Max(0.02f, _lastBoxSelectionCrop.BottomRatio - _lastBoxSelectionCrop.TopRatio);
+                double minCol, maxCol;
+                GetEffectiveColumnBounds(ActiveStream, out minCol, out maxCol);
+
+                if (e.KeyCode == Keys.Left)
+                {
+                    int ns = Math.Max((int)minCol, _lastBoxSelectionCrop.StartCol - colShift);
+                    _lastBoxSelectionCrop = new CropWindow(ns, ns + span, _lastBoxSelectionCrop.TopRatio, _lastBoxSelectionCrop.BottomRatio);
+                    Invalidate(); e.Handled = true; return;
+                }
+                if (e.KeyCode == Keys.Right)
+                {
+                    int ne = Math.Min((int)maxCol - 1, _lastBoxSelectionCrop.EndCol + colShift);
+                    _lastBoxSelectionCrop = new CropWindow(Math.Max((int)minCol, ne - span), ne, _lastBoxSelectionCrop.TopRatio, _lastBoxSelectionCrop.BottomRatio);
+                    Invalidate(); e.Handled = true; return;
+                }
+                if (e.KeyCode == Keys.Up)
+                {
+                    float nt = Math.Max(0f, _lastBoxSelectionCrop.TopRatio - rShift);
+                    _lastBoxSelectionCrop = new CropWindow(_lastBoxSelectionCrop.StartCol, _lastBoxSelectionCrop.EndCol, nt, nt + rSpan);
+                    Invalidate(); e.Handled = true; return;
+                }
+                if (e.KeyCode == Keys.Down)
+                {
+                    float nb = Math.Min(1f, _lastBoxSelectionCrop.BottomRatio + rShift);
+                    _lastBoxSelectionCrop = new CropWindow(_lastBoxSelectionCrop.StartCol, _lastBoxSelectionCrop.EndCol, Math.Max(0f, nb - rSpan), nb);
+                    Invalidate(); e.Handled = true; return;
+                }
+            }
+
             int step = e.Shift ? 10 : 1;
 
             if (e.KeyCode == Keys.Left)
@@ -1264,12 +1638,15 @@ namespace OptiFinish.UI
             SlitCameraStream cam = ActiveStream;
             if (cam == null || cam.TotalColumns <= 0) return;
 
+            float vTop = cam.ActiveCrop != null ? Math.Max(0f, Math.Min(0.95f, cam.ActiveCrop.TopRatio)) : 0f;
+            float vBot = cam.ActiveCrop != null ? Math.Max(vTop + 0.05f, Math.Min(1f, cam.ActiveCrop.BottomRatio)) : 1f;
+
             double relX = Math.Max(0, Math.Min(imgRect.Width, pt.X - imgRect.Left));
             double col = _scrollColumnOffset + (relX / _zoomFactor);
             col = Math.Max(0.0, Math.Min(cam.TotalColumns - 1, col));
 
             _cursorTimeSeconds = cam.ColumnToTimeSeconds(col);
-            _cursorVerticalRatio = (float)Math.Max(0.02, Math.Min(0.98, (double)(pt.Y - imgRect.Top) / Math.Max(1, imgRect.Height)));
+            _cursorVerticalRatio = Math.Max(0.02f, Math.Min(0.98f, ScreenYToStripRatio(pt.Y, imgRect, vTop, vBot)));
 
             RaiseHairlineMoved();
             Invalidate();
@@ -1284,12 +1661,146 @@ namespace OptiFinish.UI
             }
         }
 
+        private void ShowLaneBarContextMenu(Point location)
+        {
+            SlitCameraStream cam = ActiveStream;
+            if (_document == null || cam == null) return;
+
+            ContextMenuStrip menu = new ContextMenuStrip();
+
+            ToolStripMenuItem mLanes = new ToolStripMenuItem(Loc.Evt("Image\\LaneBar\\Popup\\Lanes", "Lanes"))
+            {
+                Checked = _showLaneGrid
+            };
+            mLanes.Click += delegate
+            {
+                _showLaneGrid = !_showLaneGrid;
+                LynxConfigService.Instance.ShowLaneGrid = _showLaneGrid;
+                Invalidate();
+            };
+            menu.Items.Add(mLanes);
+
+            ToolStripMenuItem mEnhanceReg = new ToolStripMenuItem(Loc.Evt("Image\\LaneBar\\Popup\\EnhanceRegions", "Enhance regions"))
+            {
+                Checked = cam.EnhanceEnabled || (cam.EnhanceRegions != null && cam.EnhanceRegions.Count > 0)
+            };
+            mEnhanceReg.Click += delegate
+            {
+                if (cam.EnhanceRegions.Count > 0)
+                {
+                    cam.EnhanceRegions.Clear();
+                }
+                else
+                {
+                    cam.EnhanceEnabled = !cam.EnhanceEnabled;
+                }
+                SlitScanEngine.UpdateDisplayBitmap(cam);
+                Invalidate();
+                if (SelectionActionCompleted != null) SelectionActionCompleted(this, EventArgs.Empty);
+            };
+            menu.Items.Add(mEnhanceReg);
+
+            ToolStripMenuItem mAdj = new ToolStripMenuItem(Loc.Evt("Image\\LaneBar\\Popup\\Adjustments", "Adjustments..."));
+            mAdj.Click += delegate
+            {
+                if (OpenAdjustmentsRequested != null) OpenAdjustmentsRequested(this, EventArgs.Empty);
+            };
+            menu.Items.Add(mAdj);
+
+            menu.Show(this, location);
+        }
+
         private void ShowContextToolsMenu(Point location)
         {
             if (_document == null) return;
+            SlitCameraStream cam = ActiveStream;
             int lane = _document.RatioToLane(_cursorVerticalRatio);
 
             ContextMenuStrip menu = new ContextMenuStrip();
+
+            // FinishLynx Selection Popup Menu (Strings\Event\Image\SelectionPopup\*)
+            if (cam != null && !cam.IsVideo)
+            {
+                ToolStripMenuItem mCrop = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\Crop", "&Crop"));
+                mCrop.Enabled = (_hasActiveSelectionBox || cam.TotalColumns >= 10);
+                mCrop.Click += delegate { CropToCurrentZoomOrSelection(); };
+                menu.Items.Add(mCrop);
+
+                ToolStripMenuItem mKeep = new ToolStripMenuItem(Loc.Menu("Image\\KeepSelection", "&Keep selection"));
+                mKeep.Enabled = _hasActiveSelectionBox;
+                mKeep.Click += delegate { KeepSelectionCrop(); };
+                menu.Items.Add(mKeep);
+
+                if (cam.IsCropped)
+                {
+                    ToolStripMenuItem mUncrop = new ToolStripMenuItem(Loc.Menu("Image\\Uncrop", "&Uncrop"));
+                    mUncrop.Click += delegate { UncropActiveStream(); };
+                    menu.Items.Add(mUncrop);
+                }
+
+                ToolStripMenuItem mEnhance = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\Enhance", "&Enhance"));
+                mEnhance.Click += delegate { ToggleEnhanceAtActiveBand(); };
+                menu.Items.Add(mEnhance);
+
+                menu.Items.Add(new ToolStripSeparator());
+            }
+
+            ToolStripMenuItem mExport = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\ExportBitmap", "E&xport..."));
+            mExport.Click += delegate
+            {
+                if (ExportSelectionRequested != null) ExportSelectionRequested(this, EventArgs.Empty);
+            };
+            menu.Items.Add(mExport);
+
+            ToolStripMenuItem mExportVideo = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\ExportVideo", "Export &video..."));
+            mExportVideo.Click += delegate
+            {
+                if (ExportVideoSelectionRequested != null) ExportVideoSelectionRequested(this, EventArgs.Empty);
+            };
+            menu.Items.Add(mExportVideo);
+
+            ToolStripMenuItem mPrint = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\Print", "&Print..."));
+            mPrint.Click += delegate
+            {
+                if (PrintSelectionRequested != null) PrintSelectionRequested(this, EventArgs.Empty);
+            };
+            menu.Items.Add(mPrint);
+
+            ToolStripMenuItem mPrintBmp = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\PrintToBitmap", "Print to &bitmap..."));
+            mPrintBmp.Click += delegate
+            {
+                if (PrintBitmapSelectionRequested != null) PrintBitmapSelectionRequested(this, EventArgs.Empty);
+            };
+            menu.Items.Add(mPrintBmp);
+
+            ToolStripMenuItem mScbImg = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\SetScbdImage", "Set scoreboard image"));
+            mScbImg.Click += delegate
+            {
+                if (SetScoreboardImageRequested != null) SetScoreboardImageRequested(this, EventArgs.Empty);
+            };
+            menu.Items.Add(mScbImg);
+
+            if (cam != null && !cam.IsVideo)
+            {
+                ToolStripMenuItem mWb = new ToolStripMenuItem(Loc.Evt("Image\\SelectionPopup\\WhiteBalance", "&White balance"));
+                mWb.Click += delegate { SampleWhiteBalanceAtCursor(); };
+                menu.Items.Add(mWb);
+            }
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            if (_hasActiveSelectionBox && _lastBoxSelectionCrop != null)
+            {
+                ToolStripMenuItem mZoomSel = new ToolStripMenuItem("Zoom to Selection");
+                mZoomSel.Click += delegate { ZoomToActiveSelection(); };
+                menu.Items.Add(mZoomSel);
+
+                ToolStripMenuItem mClearSel = new ToolStripMenuItem("Clear Selection (Esc)");
+                mClearSel.Click += delegate { ClearSelectionBox(); };
+                menu.Items.Add(mClearSel);
+                menu.Items.Add(new ToolStripSeparator());
+            }
+
             ToolStripMenuItem itemEvalLane = new ToolStripMenuItem(
                 string.Format(CultureInfo.InvariantCulture, "Assign {0:0.0000}s to Lane {1} Athlete (Double-Click / Enter)", _cursorTimeSeconds, lane));
             itemEvalLane.Font = new Font(menu.Font, FontStyle.Bold);
@@ -1302,12 +1813,9 @@ namespace OptiFinish.UI
             };
             menu.Items.Add(itemEvalLane);
 
-            menu.Items.Add(new ToolStripSeparator());
-
             ToolStripMenuItem itemNextObj = new ToolStripMenuItem("Find Next Runner >>");
             itemNextObj.Click += delegate
             {
-                SlitCameraStream cam = ActiveStream;
                 if (cam != null)
                 {
                     int curCol = (int)Math.Round(cam.TimeSecondsToColumn(_cursorTimeSeconds));
@@ -1321,7 +1829,6 @@ namespace OptiFinish.UI
             ToolStripMenuItem itemPrevObj = new ToolStripMenuItem("<< Find Previous Runner");
             itemPrevObj.Click += delegate
             {
-                SlitCameraStream cam = ActiveStream;
                 if (cam != null)
                 {
                     int curCol = (int)Math.Round(cam.TimeSecondsToColumn(_cursorTimeSeconds));
@@ -1331,8 +1838,6 @@ namespace OptiFinish.UI
                 }
             };
             menu.Items.Add(itemPrevObj);
-
-            menu.Items.Add(new ToolStripSeparator());
 
             ToolStripMenuItem itemZeroHere = new ToolStripMenuItem("Align Image Start (Set 0.0000s Origin Here)");
             itemZeroHere.Click += delegate

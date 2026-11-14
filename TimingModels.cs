@@ -74,6 +74,11 @@ namespace OptiFinish.Core
         public string Text { get; set; }
         public Color OverlayColor { get; set; }
         public bool Visible { get; set; }
+        public string FontName { get; set; }
+        public float FontSizePt { get; set; }
+        public bool FontBold { get; set; }
+        public bool ShowLine { get; set; }
+        public bool ShowSplits { get; set; }
 
         public ImageOverlayItem()
         {
@@ -82,6 +87,59 @@ namespace OptiFinish.Core
             Text = "";
             OverlayColor = Color.Yellow;
             Visible = true;
+            FontName = "Arial";
+            FontSizePt = 12f;
+            FontBold = true;
+            ShowLine = true;
+            ShowSplits = false;
+        }
+    }
+
+    public sealed class PrintDialogSettings
+    {
+        public int Zoom { get; set; } // 1, 2, 4, 8
+        public bool Smooth { get; set; }
+        public int Dpi { get; set; } // 300, 600, 1200
+        public double ImageHeight { get; set; } // default 4.28
+        public bool UseCentimeters { get; set; } // false = Inches, true = Centimeters
+        public bool LaneBarsOn { get; set; }
+        public bool LimitResOn { get; set; }
+        public int LimitResValue { get; set; } // default 300
+        public bool PrintResultsOn { get; set; }
+        public int MaxResults { get; set; } // default 10
+        public string ResultsRange { get; set; } // e.g. "" or "1-3" or "1,3,5"
+
+        public PrintDialogSettings()
+        {
+            Zoom = 1;
+            Smooth = true;
+            Dpi = 300;
+            ImageHeight = 4.28;
+            UseCentimeters = false;
+            LaneBarsOn = true;
+            LimitResOn = true;
+            LimitResValue = 300;
+            PrintResultsOn = false;
+            MaxResults = 10;
+            ResultsRange = "";
+        }
+
+        public PrintDialogSettings Clone()
+        {
+            return new PrintDialogSettings
+            {
+                Zoom = Zoom,
+                Smooth = Smooth,
+                Dpi = Dpi,
+                ImageHeight = ImageHeight,
+                UseCentimeters = UseCentimeters,
+                LaneBarsOn = LaneBarsOn,
+                LimitResOn = LimitResOn,
+                LimitResValue = LimitResValue,
+                PrintResultsOn = PrintResultsOn,
+                MaxResults = MaxResults,
+                ResultsRange = ResultsRange ?? ""
+            };
         }
     }
 
@@ -920,6 +978,9 @@ namespace OptiFinish.Core
         public List<SplitLocationDef> SplitLocations { get; private set; }
         public List<TimeTrialStartEntry> RecordedStarts { get; private set; }
         public List<ResultFilterRule> ResultFilters { get; private set; }
+        public bool[] OverlayGroupVisible { get; private set; }
+        public Dictionary<string, string> LapTimeSplitKeyMap { get; private set; }
+        public Stack<Action> UndoActions { get; private set; }
         public float[] CalibratedLaneBoundaries { get; set; }
         public string SourceFilePath { get; set; }
         private List<CompetitorEntry> _cachedOrderedTimed;
@@ -969,6 +1030,10 @@ namespace OptiFinish.Core
             SplitLocations.Add(new SplitLocationDef { Name = "Finish", CaptureStartSeconds = 0.0, CaptureDurationSeconds = 0.0, CameraIndex = 0 });
             RecordedStarts = new List<TimeTrialStartEntry>();
             ResultFilters = new List<ResultFilterRule>();
+            OverlayGroupVisible = new bool[9];
+            for (int gi = 0; gi < OverlayGroupVisible.Length; gi++) OverlayGroupVisible[gi] = true;
+            LapTimeSplitKeyMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            UndoActions = new Stack<Action>();
             _cachedOrderedTimed = new List<CompetitorEntry>();
         }
 
